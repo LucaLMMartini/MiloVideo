@@ -3,12 +3,22 @@
 FastAPI service. Handles video uploads, runs analysis jobs in the background,
 and serves results as JSON + rendered Markdown.
 
+## Requirements
+
+Python **3.10+**. On this machine only Python 3.9 is available — install a newer
+version first, e.g. via Homebrew:
+
+```bash
+brew install python@3.12
+```
+
 ## Run
 
 ```bash
 cd backend
-python -m venv .venv
+python3.12 -m venv .venv     # or any Python >=3.10
 source .venv/bin/activate
+pip install -U pip
 pip install -e .
 uvicorn app.main:app --reload --port 8000
 ```
