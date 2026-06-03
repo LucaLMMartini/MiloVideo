@@ -419,42 +419,71 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             if progress:
                 progress(stage, message, current, total)
 
-        def _run() -> FactSheet:
-            client = OpenAI(api_key=settings.openai_api_key)
+        client = OpenAI(api_key=settings.openai_api_key)
+        loop = asyncio.get_running_loop()
+        # The visual branch needs the voiceover hint windows; the audio branch resolves
+        # this future (to [] when the transcript isn't used) so the two run concurrently.
+        windows_future: asyncio.Future = loop.create_future()
 
-            # Stage 1: transcription ALWAYS runs (for display + translation).
+        async def audio_branch() -> tuple[Transcript, dict | None]:
+            """Transcribe → (translate ∥ prestructure ∥ transcript-facts)."""
             report("transcribe", "Transkript wird erstellt…")
-            transcript_text, segments, src_lang = self._transcribe(client, video_path)
+            text, segments, src_lang = await asyncio.to_thread(self._transcribe, client, video_path)
 
-            # Translate to the chosen target language when it differs from the source.
-            translated = None
-            if transcript_text.strip() and self.target_lang and _norm_lang(src_lang) != self.target_lang:
+            # Translate for display (independent of the analysis) — run alongside the rest.
+            translate_task = None
+            if text.strip() and self.target_lang and _norm_lang(src_lang) != self.target_lang:
                 report("translate", "Transkript wird übersetzt…")
+                translate_task = asyncio.create_task(
+                    asyncio.to_thread(self._translate, client, text, self.target_lang)
+                )
+
+            # Pre-structuring resolves the hint windows the visual branch is waiting on.
+            if self.use_audio and segments:
+                report("prestructure", "Voiceover wird vorstrukturiert…")
                 try:
-                    translated = self._translate(client, transcript_text, self.target_lang)
+                    w = await asyncio.to_thread(self._prestructure, client, segments)
+                except Exception as e:
+                    log.warning("openai_frames: prestructure failed (%s)", e)
+                    w = []
+            else:
+                w = []
+            if not windows_future.done():
+                windows_future.set_result(w)
+
+            # Transcript-derived facts — runs concurrently with the vision batches.
+            tf_partial = None
+            if self.use_audio and segments:
+                report("transcript_facts", "Fakten aus Transkript…")
+                try:
+                    tf_partial = await asyncio.to_thread(self._transcript_facts, client, segments)
+                except Exception as e:
+                    log.warning("openai_frames: transcript-fact extraction failed (%s)", e)
+
+            translated = None
+            if translate_task is not None:
+                try:
+                    translated = await translate_task
                 except Exception as e:
                     log.warning("openai_frames: translation failed (%s)", e)
+
             transcript_obj = Transcript(
                 language=src_lang,
-                text=transcript_text,
+                text=text,
                 target_language=self.target_lang,
                 translated_text=translated,
                 segments=[TranscriptSegment(**s) for s in segments],
             )
+            return transcript_obj, tf_partial
 
-            # Stage 2: voiceover pre-structuring — only when the transcript is USED.
-            windows: list[dict] = []
-            if self.use_audio and segments:
-                report("prestructure", "Voiceover wird vorstrukturiert…")
-                windows = self._prestructure(client, segments)
-
-            # Stage 3: frame sampling.
+        async def visual_branch() -> list[dict]:
+            """Sample frames (starts immediately) → sequential vision batches."""
             report("sample", "Frames werden extrahiert…")
-            frames = self._sample_frames(video_path)
+            frames = await asyncio.to_thread(self._sample_frames, video_path)
             if not frames:
                 raise RuntimeError("No frames could be sampled from the video.")
 
-            # Stage 4: vision over batches, with cross-batch context + voiceover hints.
+            windows = await windows_future  # voiceover hints (or [] when not used)
             batches = [
                 frames[i : i + self.batch_size]
                 for i in range(0, len(frames), self.batch_size)
@@ -465,24 +494,36 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             prev_tail: list[tuple[float, bytes]] = []  # last frame of prior batch (motion anchor)
             for idx, b in enumerate(batches, 1):
                 report("vision", "Bilder werden analysiert", current=idx, total=len(batches))
-                partials.append(self._vision_batch(client, prev_tail + b, windows, context=context))
+                partials.append(
+                    await asyncio.to_thread(
+                        self._vision_batch, client, prev_tail + b, windows, context
+                    )
+                )
                 context = self._journey_context(partials, b[-1][0])
                 prev_tail = b[-1:]
+            return partials
 
-            # New stage: pull facts/features straight from the transcript (across scenes).
-            if self.use_audio and segments:
-                report("transcript_facts", "Fakten aus Transkript…")
-                partials.append(self._transcript_facts(client, segments))
+        # When the transcript isn't used in the analysis, the visual branch must not wait
+        # on it — resolve the hint windows up front so frame sampling/vision run immediately.
+        if not self.use_audio and not windows_future.done():
+            windows_future.set_result([])
 
-            # Stage 5: late fusion / consolidation.
-            if len(partials) == 1 and not transcript_text.strip():
-                data = partials[0]
-            else:
-                report("consolidate", "Ergebnisse werden konsolidiert…")
-                data = self._consolidate(client, partials, transcript_text)
+        # Audio and visual pipelines run concurrently; vision batches stay sequential.
+        (transcript_obj, tf_partial), vision_partials = await asyncio.gather(
+            audio_branch(), visual_branch()
+        )
 
-            fs = FactSheet.model_validate(data)
-            fs.transcript = transcript_obj
-            return fs
+        partials: list[dict] = list(vision_partials)
+        if tf_partial is not None:
+            partials.append(tf_partial)
 
-        return await asyncio.to_thread(_run)
+        # Stage 5: late fusion / consolidation.
+        if len(partials) == 1 and not transcript_obj.text.strip():
+            data = partials[0]
+        else:
+            report("consolidate", "Ergebnisse werden konsolidiert…")
+            data = await asyncio.to_thread(self._consolidate, client, partials, transcript_obj.text)
+
+        fs = FactSheet.model_validate(data)
+        fs.transcript = transcript_obj
+        return fs
