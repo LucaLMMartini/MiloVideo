@@ -156,6 +156,29 @@ def get_frame(job_id: str, t: float = Query(0.0, ge=0, description="Timestamp in
     )
 
 
+@app.get("/jobs/{job_id}/pptx")
+def get_pptx(job_id: str):
+    """Generate a management-ready PowerPoint report from the fact-sheet."""
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    if job.result is None:
+        raise HTTPException(409, "Analysis is not finished yet.")
+
+    from .report_pptx import generate_pptx
+
+    video = upload_path(job.id, job.filename)
+    data = generate_pptx(job, job.result, video if video.exists() else None)
+
+    stem = Path(job.filename).stem
+    safe = "".join(c for c in stem if c.isalnum() or c in " _-").strip() or "report"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="{safe}_Bericht.pptx"'},
+    )
+
+
 _SEARCH_EXPAND_PROMPT = (
     "You expand a search query into closely related terms for matching text in an automotive "
     "infotainment UI fact-sheet. Given the user's term (in any language), return JSON "

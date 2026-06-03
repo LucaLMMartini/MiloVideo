@@ -76,6 +76,12 @@ export function frameUrl(jobId: string, t: number): string {
   return `${API_BASE}/jobs/${jobId}/frame?t=${t}`;
 }
 
+export async function generateReport(jobId: string): Promise<Blob> {
+  const r = await fetch(`${API_BASE}/jobs/${jobId}/pptx`);
+  if (!r.ok) throw new Error(`report: ${r.status} ${await r.text()}`);
+  return r.blob();
+}
+
 export async function searchTerms(q: string): Promise<string[]> {
   const r = await fetch(`${API_BASE}/search-terms?q=${encodeURIComponent(q)}`, {
     cache: "no-store",

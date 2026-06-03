@@ -4,7 +4,14 @@ import { useEffect, useRef, useState, use as usePromise } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_BASE, formatDuration, getJob, getReport, type Job } from "@/lib/api";
+import {
+  API_BASE,
+  formatDuration,
+  generateReport,
+  getJob,
+  getReport,
+  type Job,
+} from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
 import { FactSheetView } from "@/components/FactSheetView";
 import { ProgressView } from "@/components/ProgressView";
@@ -20,6 +27,43 @@ export default function JobPage({ params }: PageProps) {
   const [report, setReport] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportUrl, setReportUrl] = useState<string | null>(null);
+  const [reportSeconds, setReportSeconds] = useState(0);
+
+  // Count up elapsed seconds while the report is being generated.
+  useEffect(() => {
+    if (!reportBusy) return;
+    setReportSeconds(0);
+    const id = setInterval(() => setReportSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [reportBusy]);
+
+  // Release the previous object URL when it changes / on unmount.
+  useEffect(() => {
+    return () => {
+      if (reportUrl) URL.revokeObjectURL(reportUrl);
+    };
+  }, [reportUrl]);
+
+  async function onGenerateReport() {
+    if (!job) return;
+    setReportBusy(true);
+    setReportError(null);
+    setReportUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    try {
+      const blob = await generateReport(job.id);
+      setReportUrl(URL.createObjectURL(blob));
+    } catch (e: unknown) {
+      setReportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReportBusy(false);
+    }
+  }
 
   function seekTo(seconds: number) {
     const v = videoRef.current;
@@ -137,6 +181,43 @@ export default function JobPage({ params }: PageProps) {
                   </article>
                 </details>
               )}
+
+              <div className="mt-8 border-t border-neutral-200 dark:border-neutral-800 pt-6">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={onGenerateReport}
+                    disabled={reportBusy}
+                    className="bg-neutral-900 dark:bg-neutral-100 text-neutral-50 dark:text-neutral-900 px-4 py-2 rounded text-sm font-medium disabled:opacity-50"
+                  >
+                    {reportBusy
+                      ? "Wird erstellt…"
+                      : reportUrl
+                        ? "🔄 Neu erstellen"
+                        : "📊 PowerPoint-Bericht erstellen"}
+                  </button>
+
+                  {reportBusy && (
+                    <span className="text-sm text-neutral-500">
+                      Bericht wird erstellt… {reportSeconds}s
+                    </span>
+                  )}
+
+                  {!reportBusy && reportUrl && (
+                    <a
+                      href={reportUrl}
+                      download={`${job.filename}_Bericht.pptx`}
+                      className="inline-flex items-center gap-1 border border-neutral-300 dark:border-neutral-700 px-4 py-2 rounded text-sm font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    >
+                      ⬇ Bericht herunterladen
+                    </a>
+                  )}
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">
+                  Gruppiert die Fakten nach Themen, mit Belegen (Screenshots/Zitate) und Quellen.
+                </p>
+                {reportError && <p className="text-sm text-red-600 mt-2">{reportError}</p>}
+              </div>
             </>
           ) : job.status === "running" || job.status === "queued" ? (
             <ProgressView job={job} />
