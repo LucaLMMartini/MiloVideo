@@ -10,11 +10,24 @@ import tempfile
 from pathlib import Path
 
 from ..config import settings
-from ..schemas import FactSheet
+from ..schemas import FactSheet, Transcript, TranscriptSegment
 from .base import ProgressFn, VideoAnalysisProvider
 from ._shared import SYSTEM_PROMPT, extract_json
 
 log = logging.getLogger(__name__)
+
+# ISO-639-1 code -> language name, used for translation prompts and same-language skip.
+LANG_NAMES = {
+    "en": "English", "de": "German", "fr": "French", "es": "Spanish",
+    "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "pl": "Polish",
+}
+_LANG_ALIASES = {v.lower(): k for k, v in LANG_NAMES.items()}
+
+
+def _norm_lang(s: str | None) -> str:
+    """Normalize a language label (code or name) to an ISO-639-1 code."""
+    s = (s or "").strip().lower()
+    return _LANG_ALIASES.get(s, s[:2])
 
 # --- Blur-aware sampling constants (thesis instantiation, Stage 3) ---------
 # These mirror the frozen pipeline configuration and stay module-local on
@@ -40,6 +53,33 @@ Return ONLY a JSON object of this shape:
   ]
 }
 Use the timestamps from the provided segments. Omit windows that contain no feature/UI talk.
+"""
+
+# Transcript-only extraction — pull atomic facts & features from the SPOKEN content across
+# the whole video (not bound to scenes). Output the same fact-sheet shape; consolidation
+# later merges these with the vision-derived items.
+TRANSCRIPT_FACTS_PROMPT = """You are given the full voiceover transcript of a vehicle video as timestamped segments.
+Extract atomic facts and features that are stated or strongly implied by the SPOKEN content,
+considering the whole video together (not limited to any single scene).
+
+Return ONLY a JSON object with this shape (summary may be an empty string):
+{
+  "vehicle_model": "<make + model or null>",
+  "summary": "",
+  "atomic_facts": [
+    {"fact": "<one atomic statement>", "vehicle_model": "<or null>",
+     "evidence": [{"t_start": <sec>, "t_end": <sec|null>, "source": "voiceover",
+                   "quote": "<verbatim spoken text>", "note": null}]}
+  ],
+  "features": [
+    {"label": "<short name>", "description": "<one or two sentences>",
+     "evidence": [{"t_start": <sec>, "t_end": <sec|null>, "source": "voiceover",
+                   "quote": "<verbatim spoken text>", "note": null}]}
+  ],
+  "notes": []
+}
+Every evidence entry MUST use source "voiceover", a verbatim "quote" from the transcript, and the
+segment timestamp. Do not invent anything not supported by the transcript.
 """
 
 
@@ -80,19 +120,19 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
         vision_detail: str | None = None,
         batch_size: int | None = None,
         use_audio: bool | None = None,
+        target_lang: str | None = None,
     ) -> None:
         self.model = model or settings.openai_model
         self.sample_fps = sample_fps or settings.sample_fps
         self.vision_detail = vision_detail or settings.openai_vision_detail
         self.batch_size = batch_size or settings.openai_batch_size
+        # use_audio now gates only whether the transcript is USED in the analysis.
         self.use_audio = settings.openai_use_audio if use_audio is None else use_audio
+        self.target_lang = _norm_lang(target_lang or settings.target_lang)
 
-    # -- Stage 1: transcription (OpenAI API) --------------------------------
-    def _transcribe(self, client, video_path: Path) -> tuple[str, list[dict]]:
-        """Return (full_text, [{t_start, t_end, text}]). Empty on no audio / failure."""
-        if not self.use_audio:
-            return "", []
-
+    # -- Stage 1: transcription (OpenAI API) — ALWAYS runs ------------------
+    def _transcribe(self, client, video_path: Path) -> tuple[str, list[dict], str | None]:
+        """Return (full_text, [{t_start, t_end, text}], language). Empty on no audio / failure."""
         audio_path, cleanup = self._extract_audio(video_path)
         try:
             with open(audio_path, "rb") as f:
@@ -103,7 +143,7 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
                 )
         except Exception as e:
             log.warning("openai_frames: transcription failed (%s) — vision-only fallback", e)
-            return "", []
+            return "", [], None
         finally:
             if cleanup:
                 os.unlink(audio_path)
@@ -117,8 +157,38 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             for s in (getattr(tr, "segments", None) or [])
         ]
         full_text = getattr(tr, "text", "") or ""
-        log.info("openai_frames: transcript has %d segments", len(segments))
-        return full_text, segments
+        language = getattr(tr, "language", None)
+        log.info("openai_frames: transcript has %d segments (lang=%s)", len(segments), language)
+        return full_text, segments, language
+
+    def _translate(self, client, text: str, target_code: str) -> str:
+        """Translate transcript text into the target language via the chat model."""
+        target_name = LANG_NAMES.get(target_code, target_code)
+        resp = client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": (
+                    f"Translate the user's text into {target_name}. Output only the translation, "
+                    "preserving meaning and tone. Do not add comments."
+                )},
+                {"role": "user", "content": text},
+            ],
+        )
+        return resp.choices[0].message.content or ""
+
+    def _transcript_facts(self, client, segments: list[dict]) -> dict:
+        """Extract atomic facts & features from the spoken transcript (across scenes)."""
+        payload = [{"t_start": s["t_start"], "t_end": s["t_end"], "text": s["text"]}
+                   for s in segments]
+        resp = client.chat.completions.create(
+            model=self.model,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": TRANSCRIPT_FACTS_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        return extract_json(resp.choices[0].message.content or "")
 
     def _extract_audio(self, video_path: Path) -> tuple[str, bool]:
         """Extract a compact mono audio track via ffmpeg. Falls back to the raw video.
@@ -310,13 +380,14 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
     # -- Stage 5: consolidation (late fusion with the transcript) -----------
     def _consolidate(self, client, partials: list[dict], transcript: str) -> dict:
         prompt_parts = [
-            "You are given several partial fact-sheet JSON analyses of consecutive segments of "
-            "the same video, plus the full voiceover transcript. Merge the partials into ONE JSON "
-            "object of the same shape: settle on a single vehicle_model, write a single coherent "
-            "summary, union the atomic_facts (deduplicate by meaning, keep them atomic) and the "
-            "features (deduplicate by meaning). Keep all evidence with its timestamps, source, "
-            "quote and note. Use the transcript to add verbatim voiceover quotes as direct proof "
-            "where a fact or feature is spoken about. Return ONLY the merged JSON.",
+            "You are given several partial fact-sheet JSON analyses of the same video — some from "
+            "vision over consecutive frame batches, some extracted from the voiceover transcript — "
+            "plus the full transcript. Merge ALL partials into ONE JSON object of the same shape: "
+            "settle on a single vehicle_model, write a single coherent summary, union the "
+            "atomic_facts (deduplicate by meaning, keep them atomic) and the features (deduplicate "
+            "by meaning), merging a visual and a spoken observation of the same thing into one item "
+            "with both evidence entries. Keep all evidence with its timestamps, source, quote and "
+            "note. Return ONLY the merged JSON.",
             "\nPartials:\n" + json.dumps(partials, ensure_ascii=False),
         ]
         if transcript.strip():
@@ -348,30 +419,48 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             if progress:
                 progress(stage, message, current, total)
 
-        def _run() -> dict:
+        def _run() -> FactSheet:
             client = OpenAI(api_key=settings.openai_api_key)
 
-            # Stage 1 + 2: audio path (graceful no-op when there is no usable audio).
-            if self.use_audio:
-                report("transcribe", "Transkript wird erstellt…")
-            transcript_text, segments = self._transcribe(client, video_path)
-            if segments:
-                report("prestructure", "Voiceover wird vorstrukturiert…")
-            windows = self._prestructure(client, segments)
+            # Stage 1: transcription ALWAYS runs (for display + translation).
+            report("transcribe", "Transkript wird erstellt…")
+            transcript_text, segments, src_lang = self._transcribe(client, video_path)
 
-            # Stage 3: visual path.
+            # Translate to the chosen target language when it differs from the source.
+            translated = None
+            if transcript_text.strip() and self.target_lang and _norm_lang(src_lang) != self.target_lang:
+                report("translate", "Transkript wird übersetzt…")
+                try:
+                    translated = self._translate(client, transcript_text, self.target_lang)
+                except Exception as e:
+                    log.warning("openai_frames: translation failed (%s)", e)
+            transcript_obj = Transcript(
+                language=src_lang,
+                text=transcript_text,
+                target_language=self.target_lang,
+                translated_text=translated,
+                segments=[TranscriptSegment(**s) for s in segments],
+            )
+
+            # Stage 2: voiceover pre-structuring — only when the transcript is USED.
+            windows: list[dict] = []
+            if self.use_audio and segments:
+                report("prestructure", "Voiceover wird vorstrukturiert…")
+                windows = self._prestructure(client, segments)
+
+            # Stage 3: frame sampling.
             report("sample", "Frames werden extrahiert…")
             frames = self._sample_frames(video_path)
             if not frames:
                 raise RuntimeError("No frames could be sampled from the video.")
 
-            # Stage 4: vision over batches, with overlapping voiceover hints.
+            # Stage 4: vision over batches, with cross-batch context + voiceover hints.
             batches = [
                 frames[i : i + self.batch_size]
                 for i in range(0, len(frames), self.batch_size)
             ]
             log.info("openai_frames: %d batch(es) of <=%d frames", len(batches), self.batch_size)
-            partials = []
+            partials: list[dict] = []
             context = ""
             prev_tail: list[tuple[float, bytes]] = []  # last frame of prior batch (motion anchor)
             for idx, b in enumerate(batches, 1):
@@ -380,11 +469,20 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
                 context = self._journey_context(partials, b[-1][0])
                 prev_tail = b[-1:]
 
+            # New stage: pull facts/features straight from the transcript (across scenes).
+            if self.use_audio and segments:
+                report("transcript_facts", "Fakten aus Transkript…")
+                partials.append(self._transcript_facts(client, segments))
+
             # Stage 5: late fusion / consolidation.
             if len(partials) == 1 and not transcript_text.strip():
-                return partials[0]
-            report("consolidate", "Ergebnisse werden konsolidiert…")
-            return self._consolidate(client, partials, transcript_text)
+                data = partials[0]
+            else:
+                report("consolidate", "Ergebnisse werden konsolidiert…")
+                data = self._consolidate(client, partials, transcript_text)
 
-        data = await asyncio.to_thread(_run)
-        return FactSheet.model_validate(data)
+            fs = FactSheet.model_validate(data)
+            fs.transcript = transcript_obj
+            return fs
+
+        return await asyncio.to_thread(_run)

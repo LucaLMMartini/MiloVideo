@@ -75,6 +75,7 @@ def new_job(
     sample_fps: float | None = None,
     vision_detail: str | None = None,
     use_audio: bool | None = None,
+    target_lang: str | None = None,
 ) -> Job:
     now = _now()
     job = Job(
@@ -89,6 +90,7 @@ def new_job(
         sample_fps=sample_fps,
         vision_detail=vision_detail,
         use_audio=use_audio,
+        target_lang=target_lang,
     )
     save_job(job)
     return job

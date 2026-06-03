@@ -49,6 +49,24 @@ class Feature(BaseModel):
     evidence: list[Evidence] = []
 
 
+class TranscriptSegment(BaseModel):
+    """One timestamped line of the voiceover transcript."""
+    t_start: float = Field(ge=0)
+    t_end: float | None = Field(default=None, ge=0)
+    text: str
+
+
+class Transcript(BaseModel):
+    """The voiceover transcript, always produced, optionally translated."""
+    language: str | None = Field(default=None, description="Detected source language.")
+    text: str = Field(default="", description="Original full transcript text.")
+    target_language: str | None = Field(default=None, description="Requested target language.")
+    translated_text: str | None = Field(
+        default=None, description="Translation into target_language (None if same language)."
+    )
+    segments: list[TranscriptSegment] = []
+
+
 class FactSheet(BaseModel):
     """The analysis output: a vehicle fact-sheet of atomic facts + recognized features."""
     vehicle_model: str | None = Field(
@@ -58,6 +76,7 @@ class FactSheet(BaseModel):
     atomic_facts: list[AtomicFact] = []
     features: list[Feature] = []
     notes: list[str] = []
+    transcript: Transcript | None = None
 
 
 class JobProgress(BaseModel):
@@ -82,6 +101,7 @@ class Job(BaseModel):
     sample_fps: float | None = None
     vision_detail: str | None = None
     use_audio: bool | None = None
+    target_lang: str | None = None
     error: str | None = None
     result: FactSheet | None = None
     report_path: str | None = None

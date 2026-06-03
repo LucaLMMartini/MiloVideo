@@ -10,6 +10,7 @@ def get_provider(
     sample_fps: float | None = None,
     vision_detail: str | None = None,
     use_audio: bool | None = None,
+    target_lang: str | None = None,
 ) -> VideoAnalysisProvider:
     n = (name or settings.provider).lower()
     if n == "mock":
@@ -18,7 +19,7 @@ def get_provider(
         from .openai_frames import OpenAIFramesProvider
         return OpenAIFramesProvider(
             model=model, sample_fps=sample_fps, vision_detail=vision_detail,
-            use_audio=use_audio,
+            use_audio=use_audio, target_lang=target_lang,
         )
     if n == "gemini":
         from .gemini import GeminiProvider

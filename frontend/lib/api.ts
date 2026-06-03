@@ -23,12 +23,27 @@ export interface Feature {
   evidence: Evidence[];
 }
 
+export interface TranscriptSegment {
+  t_start: number;
+  t_end?: number | null;
+  text: string;
+}
+
+export interface Transcript {
+  language?: string | null;
+  text: string;
+  target_language?: string | null;
+  translated_text?: string | null;
+  segments: TranscriptSegment[];
+}
+
 export interface FactSheet {
   vehicle_model?: string | null;
   summary: string;
   atomic_facts: AtomicFact[];
   features: Feature[];
   notes: string[];
+  transcript?: Transcript | null;
 }
 
 export interface JobProgress {
@@ -51,6 +66,7 @@ export interface Job {
   sample_fps?: number | null;
   vision_detail?: string | null;
   use_audio?: boolean | null;
+  target_lang?: string | null;
   error?: string | null;
   result?: FactSheet | null;
   report_path?: string | null;
@@ -58,6 +74,15 @@ export interface Job {
 
 export function frameUrl(jobId: string, t: number): string {
   return `${API_BASE}/jobs/${jobId}/frame?t=${t}`;
+}
+
+export async function searchTerms(q: string): Promise<string[]> {
+  const r = await fetch(`${API_BASE}/search-terms?q=${encodeURIComponent(q)}`, {
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error(`searchTerms: ${r.status}`);
+  const data = (await r.json()) as { terms: string[] };
+  return data.terms ?? [];
 }
 
 export function formatDuration(seconds: number): string {
@@ -94,6 +119,7 @@ export interface RunConfig {
   sampleFps?: number;
   visionDetail?: string;
   useAudio?: boolean;
+  targetLang?: string;
 }
 
 export async function uploadVideo(file: File, cfg: RunConfig = {}): Promise<{ id: string }> {
@@ -104,6 +130,7 @@ export async function uploadVideo(file: File, cfg: RunConfig = {}): Promise<{ id
   if (cfg.sampleFps != null) fd.append("sample_fps", String(cfg.sampleFps));
   if (cfg.visionDetail) fd.append("vision_detail", cfg.visionDetail);
   if (cfg.useAudio != null) fd.append("use_audio", String(cfg.useAudio));
+  if (cfg.targetLang) fd.append("target_lang", cfg.targetLang);
   const r = await fetch(`${API_BASE}/jobs`, { method: "POST", body: fd });
   if (!r.ok) throw new Error(`uploadVideo: ${r.status} ${await r.text()}`);
   return r.json();

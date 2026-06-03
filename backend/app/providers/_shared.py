@@ -22,6 +22,15 @@ Distinguish two kinds of output:
    single atomic fact, often dynamic or conditional. Example: "Display brightness adapts when
    driving through a tunnel." These also carry evidence with timestamps.
 
+Be EXHAUSTIVE about the on-screen UI. Capture as individual atomic facts:
+  - every app or tile shown in an app grid, launcher or menu (one fact per app, by its name),
+  - every icon and control on screen (home/back, climate, media, phone, navigation, settings,
+    status-bar icons, toggles, sliders, buttons),
+  - the visible on-screen TEXT and labels: button/menu labels, widget and section titles,
+    status-bar items (time, temperature, connectivity), notification badges and counts.
+  Read labels verbatim where possible and note their language. Prefer MANY specific atomic facts
+  (e.g. "The app grid contains a 'Nachrichten' (Messages) app.") over a few general statements.
+
 Identify the primary vehicle model if it is shown (badge, screen, spoken) or stated.
 
 Return ONLY a JSON object — no prose, no markdown fences — matching this shape:

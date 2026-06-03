@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { uploadVideo } from "@/lib/api";
 
 const MODELS = ["gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"];
+const LANGUAGES = [
+  { code: "de", label: "German" },
+  { code: "en", label: "English" },
+  { code: "fr", label: "French" },
+  { code: "es", label: "Spanish" },
+  { code: "it", label: "Italian" },
+];
 
 export function UploadForm() {
   const router = useRouter();
@@ -14,6 +21,7 @@ export function UploadForm() {
   const [sampleFps, setSampleFps] = useState(1.0);
   const [visionDetail, setVisionDetail] = useState("high");
   const [useAudio, setUseAudio] = useState(true);
+  const [targetLang, setTargetLang] = useState("de");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -46,7 +54,7 @@ export function UploadForm() {
     try {
       const { id } = await uploadVideo(file, {
         provider: provider || undefined,
-        ...(isOpenAI ? { model, sampleFps, visionDetail, useAudio } : {}),
+        ...(isOpenAI ? { model, sampleFps, visionDetail, useAudio, targetLang } : {}),
       });
       router.push(`/jobs/${id}`);
     } catch (err: unknown) {
@@ -164,6 +172,24 @@ export function UploadForm() {
             </select>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium mb-1">Transcript language</label>
+            <select
+              value={targetLang}
+              onChange={(e) => setTargetLang(e.target.value)}
+              className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm w-full"
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-neutral-500 mt-1">
+              Transcript is always created and translated into this language.
+            </p>
+          </div>
+
           <div className="sm:col-span-3">
             <label className="flex items-center gap-2 text-sm font-medium">
               <input
@@ -172,11 +198,12 @@ export function UploadForm() {
                 onChange={(e) => setUseAudio(e.target.checked)}
                 className="h-4 w-4"
               />
-              Multimodal (use voiceover transcript)
+              Use voiceover for analysis
             </label>
             <p className="text-xs text-neutral-500 mt-1">
-              On: transcribe audio and fuse it with the frames (cascaded late fusion). Off:
-              vision-only.
+              On: also derive atomic facts &amp; features from the transcript and feed voiceover
+              hints to the vision stage (fused with the visual results). Off: vision-only — the
+              transcript is still created and shown.
             </p>
           </div>
         </div>

@@ -17,10 +17,14 @@ class Settings(BaseSettings):
     openai_vision_detail: str = "high"
     openai_batch_size: int = 10
 
-    # Multimodal audio path (late fusion). Whisper-1 is the only OpenAI transcribe
-    # model that returns segment-level timestamps (verbose_json), which Stage 2 needs.
+    # Transcription always runs (for display + translation). The multimodal toggle
+    # below only controls whether the transcript is USED in the analysis (hints +
+    # transcript-derived facts). Whisper-1 returns segment timestamps (verbose_json).
     openai_use_audio: bool = True
     openai_transcribe_model: str = "whisper-1"
+
+    # Target language the transcript is translated into for display (ISO-639-1 code).
+    target_lang: str = "de"
 
     # Frame-sampling rate: sample points per second of video runtime (thesis: 1/s).
     sample_fps: float = 1.0

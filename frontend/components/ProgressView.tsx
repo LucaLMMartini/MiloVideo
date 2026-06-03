@@ -7,9 +7,11 @@ import { formatDuration, type Job } from "@/lib/api";
 // run is vision-only; they simply never become the active stage.
 const STAGES: { key: string; label: string }[] = [
   { key: "transcribe", label: "Transkript wird erstellt" },
+  { key: "translate", label: "Transkript wird übersetzt" },
   { key: "prestructure", label: "Voiceover wird vorstrukturiert" },
   { key: "sample", label: "Frames werden extrahiert" },
   { key: "vision", label: "Bilder werden analysiert" },
+  { key: "transcript_facts", label: "Fakten aus Transkript" },
   { key: "consolidate", label: "Ergebnisse werden konsolidiert" },
 ];
 

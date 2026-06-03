@@ -33,6 +33,7 @@ async def run_job(job_id: str, video_path: Path) -> None:
             sample_fps=job.sample_fps,
             vision_detail=job.vision_detail,
             use_audio=job.use_audio,
+            target_lang=job.target_lang,
         )
         result = await provider.analyze(video_path, progress=report_progress)
 

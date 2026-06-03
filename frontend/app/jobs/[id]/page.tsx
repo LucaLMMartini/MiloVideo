@@ -8,6 +8,7 @@ import { API_BASE, formatDuration, getJob, getReport, type Job } from "@/lib/api
 import { StatusBadge } from "@/components/StatusBadge";
 import { FactSheetView } from "@/components/FactSheetView";
 import { ProgressView } from "@/components/ProgressView";
+import { TranscriptView } from "@/components/TranscriptView";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -69,22 +70,30 @@ export default function JobPage({ params }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/" className="text-sm text-neutral-500 hover:underline">
-          ← back
-        </Link>
-      </div>
-
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{job.filename}</h1>
-          <p className="text-xs text-neutral-500 mt-1">
-            {job.id} · {(job.size_bytes / (1024 * 1024)).toFixed(1)} MB · {job.provider}
-            {durationSec != null && ` · ⏱ ${formatDuration(durationSec)}`}
-          </p>
+      {/* Sticky header: info on the left, smaller video on the right. */}
+      <div className="sticky top-0 z-10 bg-neutral-50 dark:bg-neutral-950 border-b border-neutral-200 dark:border-neutral-800 pt-4 pb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+          <div className="space-y-2">
+            <Link href="/" className="text-sm text-neutral-500 hover:underline">
+              ← back
+            </Link>
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="text-xl font-semibold tracking-tight">{job.filename}</h1>
+              <StatusBadge status={job.status} />
+            </div>
+            <p className="text-xs text-neutral-500">
+              {job.id} · {(job.size_bytes / (1024 * 1024)).toFixed(1)} MB · {job.provider}
+              {durationSec != null && ` · ⏱ ${formatDuration(durationSec)}`}
+            </p>
+          </div>
+          <video
+            ref={videoRef}
+            src={`${API_BASE}/jobs/${job.id}/video`}
+            controls
+            className="w-full max-h-[38vh] object-contain rounded border border-neutral-200 dark:border-neutral-800 bg-black"
+          />
         </div>
-        <StatusBadge status={job.status} />
-      </header>
+      </div>
 
       {job.status === "failed" && (
         <pre className="text-sm bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-3 rounded whitespace-pre-wrap">
@@ -93,18 +102,6 @@ export default function JobPage({ params }: PageProps) {
       )}
 
       <section className="space-y-6">
-        <div className="sticky top-0 z-10 bg-neutral-50 dark:bg-neutral-950 pt-2 pb-3 space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            Video
-          </h2>
-          <video
-            ref={videoRef}
-            src={`${API_BASE}/jobs/${job.id}/video`}
-            controls
-            className="mx-auto max-h-[50vh] max-w-full rounded border border-neutral-200 dark:border-neutral-800 bg-black"
-          />
-        </div>
-
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 mb-3">
             Fact-sheet
@@ -112,6 +109,24 @@ export default function JobPage({ params }: PageProps) {
           {job.result ? (
             <>
               <FactSheetView sheet={job.result} jobId={job.id} onSeek={seekTo} />
+              {job.result.transcript && (
+                <details className="mt-6" open>
+                  <summary className="text-sm font-semibold uppercase tracking-wide text-neutral-500 cursor-pointer">
+                    Transcript
+                  </summary>
+                  <div className="mt-3">
+                    <TranscriptView transcript={job.result.transcript} onSeek={seekTo} />
+                  </div>
+                </details>
+              )}
+              {job.result.summary && (
+                <details className="mt-6">
+                  <summary className="text-sm font-semibold uppercase tracking-wide text-neutral-500 cursor-pointer">
+                    Summary
+                  </summary>
+                  <p className="text-sm leading-relaxed mt-3">{job.result.summary}</p>
+                </details>
+              )}
               {report && (
                 <details className="mt-6">
                   <summary className="text-sm text-neutral-500 cursor-pointer hover:underline">

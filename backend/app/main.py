@@ -57,6 +57,7 @@ async def create_job(
     sample_fps: float | None = Form(default=None),
     vision_detail: str | None = Form(default=None),
     use_audio: bool | None = Form(default=None),
+    target_lang: str | None = Form(default=None),
 ) -> JobCreated:
     if not video.filename:
         raise HTTPException(400, "Missing filename.")
@@ -84,6 +85,7 @@ async def create_job(
         sample_fps=sample_fps,
         vision_detail=vision_detail,
         use_audio=use_audio,
+        target_lang=target_lang,
     )
     schedule(job.id, dest)
     return JobCreated(id=job.id, status=job.status)
@@ -152,3 +154,40 @@ def get_frame(job_id: str, t: float = Query(0.0, ge=0, description="Timestamp in
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=3600"},
     )
+
+
+_SEARCH_EXPAND_PROMPT = (
+    "You expand a search query into closely related terms for matching text in an automotive "
+    "infotainment UI fact-sheet. Given the user's term (in any language), return JSON "
+    '{"terms": [...]} with 5-12 lowercase terms: synonyms, common abbreviations, and BOTH the '
+    "German and English equivalents. Keep them specific and relevant; no explanations."
+)
+
+
+@app.get("/search-terms")
+def search_terms(q: str = Query(..., min_length=1)):
+    """Expand a search query into synonyms + DE/EN equivalents (falls back to the raw term)."""
+    import json as _json
+
+    base = q.strip().lower()
+    terms = {base}
+    if settings.openai_api_key:
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=settings.openai_api_key)
+            resp = client.chat.completions.create(
+                model=settings.openai_model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": _SEARCH_EXPAND_PROMPT},
+                    {"role": "user", "content": q.strip()},
+                ],
+            )
+            data = _json.loads(resp.choices[0].message.content or "{}")
+            for t in data.get("terms", []):
+                if isinstance(t, str) and t.strip():
+                    terms.add(t.strip().lower())
+        except Exception as e:
+            log.warning("search-terms expansion failed: %s", e)
+    return {"terms": sorted(terms)}
