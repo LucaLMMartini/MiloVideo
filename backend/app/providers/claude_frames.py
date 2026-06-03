@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..schemas import AnalysisResult
-from .base import VideoAnalysisProvider
+from ..schemas import FactSheet
+from .base import ProgressFn, VideoAnalysisProvider
 
 
 class ClaudeFramesProvider(VideoAnalysisProvider):
@@ -11,7 +11,7 @@ class ClaudeFramesProvider(VideoAnalysisProvider):
 
     name = "claude_frames"
 
-    async def analyze(self, video_path: Path) -> AnalysisResult:
+    async def analyze(self, video_path: Path, progress: ProgressFn | None = None) -> FactSheet:
         raise NotImplementedError(
             "ClaudeFramesProvider is a stub. Install the `claude` extras, set "
             "ANTHROPIC_API_KEY, sample frames with OpenCV, and call the Anthropic SDK "

@@ -48,7 +48,34 @@ def list_jobs() -> list[Job]:
     return jobs
 
 
-def new_job(job_id: str, filename: str, size_bytes: int, provider: str) -> Job:
+def recover_orphaned_jobs() -> int:
+    """Mark jobs stuck in running/queued as failed.
+
+    A server restart (e.g. uvicorn --reload) kills the in-flight background task,
+    leaving its job 'running' forever. On boot we fail those so the UI is honest.
+    """
+    n = 0
+    for job in list_jobs():
+        if job.status in (JobStatus.running, JobStatus.queued):
+            job.status = JobStatus.failed
+            job.error = "Interrupted by a server restart (e.g. --reload). Please re-run."
+            job.progress = None
+            save_job(job)
+            n += 1
+    return n
+
+
+def new_job(
+    job_id: str,
+    filename: str,
+    size_bytes: int,
+    provider: str,
+    *,
+    model: str | None = None,
+    sample_fps: float | None = None,
+    vision_detail: str | None = None,
+    use_audio: bool | None = None,
+) -> Job:
     now = _now()
     job = Job(
         id=job_id,
@@ -58,6 +85,10 @@ def new_job(job_id: str, filename: str, size_bytes: int, provider: str) -> Job:
         created_at=now,
         updated_at=now,
         provider=provider,
+        model=model,
+        sample_fps=sample_fps,
+        vision_detail=vision_detail,
+        use_audio=use_audio,
     )
     save_job(job)
     return job

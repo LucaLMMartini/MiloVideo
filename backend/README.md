@@ -25,6 +25,11 @@ uvicorn app.main:app --reload --port 8000
 
 Open http://localhost:8000/docs for the OpenAPI explorer.
 
+> **Long runs & `--reload`:** with `--reload`, saving any `.py` file restarts the
+> server and **kills the in-flight analysis** — the job then hangs on `running`.
+> For real (multi-minute) analyses, run **without** `--reload`, or just don't edit
+> files mid-run. Orphaned `running`/`queued` jobs are auto-failed on the next startup.
+
 ## Providers
 
 A "provider" is anything that turns a video file into an `AnalysisResult`.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiofiles
@@ -12,11 +13,28 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from .config import settings
 from .jobs import schedule
 from .schemas import Job, JobCreated
-from .storage import list_jobs, load_job, new_job, report_path, upload_path
+from .storage import (
+    list_jobs,
+    load_job,
+    new_job,
+    recover_orphaned_jobs,
+    report_path,
+    upload_path,
+)
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 
-app = FastAPI(title="video-feature-extractor", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    n = recover_orphaned_jobs()
+    if n:
+        log.warning("Recovered %d orphaned job(s) left 'running' by a previous restart.", n)
+    yield
+
+
+app = FastAPI(title="video-feature-extractor", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +53,10 @@ def health() -> dict:
 async def create_job(
     video: UploadFile = File(...),
     provider: str | None = Form(default=None),
+    model: str | None = Form(default=None),
+    sample_fps: float | None = Form(default=None),
+    vision_detail: str | None = Form(default=None),
+    use_audio: bool | None = Form(default=None),
 ) -> JobCreated:
     if not video.filename:
         raise HTTPException(400, "Missing filename.")
@@ -53,7 +75,16 @@ async def create_job(
                 raise HTTPException(413, f"File exceeds {settings.max_upload_mb} MB limit.")
             await out.write(chunk)
 
-    job = new_job(job_id, video.filename, written, provider or settings.provider)
+    job = new_job(
+        job_id,
+        video.filename,
+        written,
+        provider or settings.provider,
+        model=model,
+        sample_fps=sample_fps,
+        vision_detail=vision_detail,
+        use_audio=use_audio,
+    )
     schedule(job.id, dest)
     return JobCreated(id=job.id, status=job.status)
 

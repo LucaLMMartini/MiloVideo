@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, use as usePromise } from "react";
+import { useEffect, useRef, useState, use as usePromise } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_BASE, getJob, getReport, type Job } from "@/lib/api";
+import { API_BASE, formatDuration, getJob, getReport, type Job } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
+import { FactSheetView } from "@/components/FactSheetView";
+import { ProgressView } from "@/components/ProgressView";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -16,6 +18,14 @@ export default function JobPage({ params }: PageProps) {
   const [job, setJob] = useState<Job | null>(null);
   const [report, setReport] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  function seekTo(seconds: number) {
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause(); // jump to the evidence frame but stay paused
+    v.currentTime = seconds;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -52,6 +62,11 @@ export default function JobPage({ params }: PageProps) {
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (!job) return <p className="text-sm text-neutral-500">Loading…</p>;
 
+  const done = job.status === "succeeded" || job.status === "failed";
+  const durationSec = done
+    ? (Date.parse(job.updated_at) - Date.parse(job.created_at)) / 1000
+    : null;
+
   return (
     <div className="space-y-6">
       <div>
@@ -65,6 +80,7 @@ export default function JobPage({ params }: PageProps) {
           <h1 className="text-2xl font-semibold tracking-tight">{job.filename}</h1>
           <p className="text-xs text-neutral-500 mt-1">
             {job.id} · {(job.size_bytes / (1024 * 1024)).toFixed(1)} MB · {job.provider}
+            {durationSec != null && ` · ⏱ ${formatDuration(durationSec)}`}
           </p>
         </div>
         <StatusBadge status={job.status} />
@@ -76,31 +92,44 @@ export default function JobPage({ params }: PageProps) {
         </pre>
       )}
 
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <aside className="md:col-span-1 space-y-3">
+      <section className="space-y-6">
+        <div className="sticky top-0 z-10 bg-neutral-50 dark:bg-neutral-950 pt-2 pb-3 space-y-2">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
             Video
           </h2>
           <video
+            ref={videoRef}
             src={`${API_BASE}/jobs/${job.id}/video`}
             controls
-            className="w-full rounded border border-neutral-200 dark:border-neutral-800"
+            className="mx-auto max-h-[50vh] max-w-full rounded border border-neutral-200 dark:border-neutral-800 bg-black"
           />
-        </aside>
+        </div>
 
-        <div className="md:col-span-2">
+        <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 mb-3">
-            Report
+            Fact-sheet
           </h2>
-          {report ? (
-            <article className="prose-report">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
-            </article>
+          {job.result ? (
+            <>
+              <FactSheetView sheet={job.result} onSeek={seekTo} />
+              {report && (
+                <details className="mt-6">
+                  <summary className="text-sm text-neutral-500 cursor-pointer hover:underline">
+                    Raw report (markdown)
+                  </summary>
+                  <article className="prose-report mt-3">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+                  </article>
+                </details>
+              )}
+            </>
+          ) : job.status === "running" || job.status === "queued" ? (
+            <ProgressView job={job} />
           ) : (
             <p className="text-sm text-neutral-500">
               {job.status === "succeeded"
-                ? "Loading report…"
-                : "Report will appear here when analysis finishes."}
+                ? "Loading results…"
+                : "The fact-sheet will appear here when analysis finishes."}
             </p>
           )}
         </div>

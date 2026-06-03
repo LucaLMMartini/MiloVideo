@@ -5,9 +5,26 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    provider: str = "mock"
+    provider: str = "openai"
     google_api_key: str = ""
     anthropic_api_key: str = ""
+    openai_api_key: str = ""
+
+    # OpenAI frame-sampling defaults — mirror the thesis instantiation:
+    # one unified GPT-5 snapshot for every LLM/vision call, vision detail "high",
+    # batches of at most 10 chronologically ordered frames.
+    openai_model: str = "gpt-5"
+    openai_vision_detail: str = "high"
+    openai_batch_size: int = 10
+
+    # Multimodal audio path (late fusion). Whisper-1 is the only OpenAI transcribe
+    # model that returns segment-level timestamps (verbose_json), which Stage 2 needs.
+    openai_use_audio: bool = True
+    openai_transcribe_model: str = "whisper-1"
+
+    # Frame-sampling rate: sample points per second of video runtime (thesis: 1/s).
+    sample_fps: float = 1.0
+
     max_upload_mb: int = 4096
 
     data_dir: Path = Path("data")
