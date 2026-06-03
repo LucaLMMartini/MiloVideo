@@ -231,17 +231,31 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
         return frames
 
     # -- Stage 4: vision over frame batches ---------------------------------
-    def _vision_batch(self, client, frames: list[tuple[float, bytes]], windows: list[dict]) -> dict:
+    def _vision_batch(
+        self,
+        client,
+        frames: list[tuple[float, bytes]],
+        windows: list[dict],
+        context: str = "",
+    ) -> dict:
         content: list[dict] = [
             {
                 "type": "text",
                 "text": (
                     "Analyze these chronologically ordered frames per the instructions. "
                     "Each image is preceded by its timestamp in seconds from the video start; "
-                    "use those timestamps for all evidence."
+                    "use those timestamps for all evidence.\n"
+                    "Track user-journey INTERACTIONS across the frames — taps, swipes, scrolls, "
+                    "drags, button presses, finger movements and display touches — and report each "
+                    "as a feature whose evidence spans the interaction (set t_start and t_end) and "
+                    "whose description names the gesture, the screen/element it acts on, and the "
+                    "resulting transition. The first frame may be the last frame of the previous "
+                    "batch, given so you can detect motion continuing across the boundary."
                 ),
             }
         ]
+        if context:
+            content.append({"type": "text", "text": context})
         hints = self._hints_for_range(windows, frames[0][0], frames[-1][0])
         if hints:
             content.append({"type": "text", "text": hints})
@@ -267,6 +281,31 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             ],
         )
         return extract_json(resp.choices[0].message.content or "")
+
+    @staticmethod
+    def _journey_context(partials: list[dict], last_ts: float) -> str:
+        """Compact running summary fed into the next batch for cross-batch continuity."""
+        feats: list[str] = []
+        facts: list[str] = []
+        for p in partials:
+            for f in (p.get("features") or []):
+                if f.get("label"):
+                    feats.append(f["label"])
+            for a in (p.get("atomic_facts") or []):
+                if a.get("fact"):
+                    facts.append(a["fact"])
+        feats = list(dict.fromkeys(feats))[:20]
+        facts = list(dict.fromkeys(facts))[:20]
+        lines = [f"Context so far (previous batches ended at t={last_ts:.1f}s):"]
+        if feats:
+            lines.append("Features/interactions already seen: " + "; ".join(feats))
+        if facts:
+            lines.append("Facts already seen: " + "; ".join(facts))
+        lines.append(
+            "Continue the journey from here. Do not repeat already-listed items unless you have "
+            "new evidence; do extend an ongoing interaction that started in a previous batch."
+        )
+        return "\n".join(lines)
 
     # -- Stage 5: consolidation (late fusion with the transcript) -----------
     def _consolidate(self, client, partials: list[dict], transcript: str) -> dict:
@@ -333,9 +372,13 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             ]
             log.info("openai_frames: %d batch(es) of <=%d frames", len(batches), self.batch_size)
             partials = []
+            context = ""
+            prev_tail: list[tuple[float, bytes]] = []  # last frame of prior batch (motion anchor)
             for idx, b in enumerate(batches, 1):
                 report("vision", "Bilder werden analysiert", current=idx, total=len(batches))
-                partials.append(self._vision_batch(client, b, windows))
+                partials.append(self._vision_batch(client, prev_tail + b, windows, context=context))
+                context = self._journey_context(partials, b[-1][0])
+                prev_tail = b[-1:]
 
             # Stage 5: late fusion / consolidation.
             if len(partials) == 1 and not transcript_text.strip():

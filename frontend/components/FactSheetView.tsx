@@ -1,6 +1,6 @@
 "use client";
 
-import type { AtomicFact, Evidence, FactSheet, Feature } from "@/lib/api";
+import { frameUrl, type AtomicFact, type Evidence, type FactSheet, type Feature } from "@/lib/api";
 
 function fmtTs(t: number): string {
   const total = Math.floor(t);
@@ -18,38 +18,57 @@ function evidenceTitle(e: Evidence): string {
   return bits.join(" — ");
 }
 
-function EvidenceChips({
+function EvidenceList({
   evidence,
+  jobId,
   onSeek,
 }: {
   evidence: Evidence[];
+  jobId: string;
   onSeek: (t: number) => void;
 }) {
   if (!evidence?.length) return null;
   return (
-    <div className="flex flex-wrap gap-1.5 mt-2">
-      {evidence.map((e, i) => (
-        <button
-          key={i}
-          type="button"
-          onClick={() => onSeek(e.t_start)}
-          title={evidenceTitle(e)}
-          className="inline-flex items-center gap-1 rounded border border-neutral-300 dark:border-neutral-700 px-1.5 py-0.5 text-xs font-mono hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-        >
-          ▶ {fmtTs(e.t_start)}
-          {e.t_end != null ? `–${fmtTs(e.t_end)}` : ""}
-          <span className="text-[10px] text-neutral-500 not-italic">{e.source}</span>
-        </button>
-      ))}
+    <div className="flex flex-wrap gap-3 mt-3">
+      {evidence.map((e, i) => {
+        const src = frameUrl(jobId, e.t_start);
+        return (
+          <figure key={i} className="w-44">
+            {/* Screenshot — opens full-res in a new tab to save for slides. */}
+            <a href={src} target="_blank" rel="noreferrer" title="Open full screenshot">
+              <img
+                src={src}
+                alt={`Frame at ${fmtTs(e.t_start)}`}
+                loading="lazy"
+                className="w-44 aspect-video object-cover rounded border border-neutral-200 dark:border-neutral-800 bg-black"
+              />
+            </a>
+            <figcaption className="mt-1">
+              <button
+                type="button"
+                onClick={() => onSeek(e.t_start)}
+                title={evidenceTitle(e)}
+                className="inline-flex items-center gap-1 rounded border border-neutral-300 dark:border-neutral-700 px-1.5 py-0.5 text-xs font-mono hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+              >
+                ▶ {fmtTs(e.t_start)}
+                {e.t_end != null ? `–${fmtTs(e.t_end)}` : ""}
+                <span className="text-[10px] text-neutral-500 not-italic">{e.source}</span>
+              </button>
+            </figcaption>
+          </figure>
+        );
+      })}
     </div>
   );
 }
 
 export function FactSheetView({
   sheet,
+  jobId,
   onSeek,
 }: {
   sheet: FactSheet;
+  jobId: string;
   onSeek: (t: number) => void;
 }) {
   return (
@@ -86,7 +105,7 @@ export function FactSheetView({
                 {f.vehicle_model && (
                   <p className="text-xs text-neutral-500 mt-0.5">{f.vehicle_model}</p>
                 )}
-                <EvidenceChips evidence={f.evidence} onSeek={onSeek} />
+                <EvidenceList evidence={f.evidence} jobId={jobId} onSeek={onSeek} />
               </li>
             ))}
           </ul>
@@ -112,7 +131,7 @@ export function FactSheetView({
                     {f.description}
                   </p>
                 )}
-                <EvidenceChips evidence={f.evidence} onSeek={onSeek} />
+                <EvidenceList evidence={f.evidence} jobId={jobId} onSeek={onSeek} />
               </li>
             ))}
           </ul>

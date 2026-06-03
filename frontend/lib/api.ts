@@ -56,6 +56,10 @@ export interface Job {
   report_path?: string | null;
 }
 
+export function frameUrl(jobId: string, t: number): string {
+  return `${API_BASE}/jobs/${jobId}/frame?t=${t}`;
+}
+
 export function formatDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
   if (s < 60) return `${s}s`;

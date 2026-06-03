@@ -111,7 +111,7 @@ export default function JobPage({ params }: PageProps) {
           </h2>
           {job.result ? (
             <>
-              <FactSheetView sheet={job.result} onSeek={seekTo} />
+              <FactSheetView sheet={job.result} jobId={job.id} onSeek={seekTo} />
               {report && (
                 <details className="mt-6">
                   <summary className="text-sm text-neutral-500 cursor-pointer hover:underline">

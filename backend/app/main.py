@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiofiles
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from .config import settings
 from .jobs import schedule
@@ -119,3 +119,36 @@ def get_video(job_id: str):
     if not video.exists():
         raise HTTPException(404, "Video missing on disk.")
     return FileResponse(video, media_type="video/mp4", filename=job.filename)
+
+
+@app.get("/jobs/{job_id}/frame")
+def get_frame(job_id: str, t: float = Query(0.0, ge=0, description="Timestamp in seconds.")):
+    """Extract a single JPEG frame at timestamp `t` — used as evidence screenshots."""
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    video = upload_path(job.id, job.filename)
+    if not video.exists():
+        raise HTTPException(404, "Video missing on disk.")
+    try:
+        import cv2
+    except ImportError:
+        raise HTTPException(503, "OpenCV is not installed; cannot extract frames.")
+
+    cap = cv2.VideoCapture(str(video))
+    try:
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            raise HTTPException(404, "Could not read a frame at that timestamp.")
+        ok_enc, buf = cv2.imencode(".jpg", frame)
+        if not ok_enc:
+            raise HTTPException(500, "Could not encode the frame.")
+    finally:
+        cap.release()
+
+    return Response(
+        content=buf.tobytes(),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
