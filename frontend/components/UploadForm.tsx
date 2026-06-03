@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { uploadVideo } from "@/lib/api";
 
@@ -16,19 +16,43 @@ const LANGUAGES = [
 export function UploadForm() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [provider, setProvider] = useState("openai");
   const [model, setModel] = useState("gpt-5");
   const [sampleFps, setSampleFps] = useState(1.0);
   const [visionDetail, setVisionDetail] = useState("high");
   const [useAudio, setUseAudio] = useState(true);
   const [targetLang, setTargetLang] = useState("de");
+  const [brand, setBrand] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [trim, setTrim] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadSeconds, setUploadSeconds] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Frame-sampling controls only apply to the OpenAI (frame-sampling) provider.
   const isOpenAI = provider === "openai" || provider === "claude_frames";
+
+  // Object URL for the inline preview of the selected file.
+  useEffect(() => {
+    if (!file) {
+      setFileUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setFileUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  // Count up elapsed seconds during upload.
+  useEffect(() => {
+    if (!busy) return;
+    setUploadSeconds(0);
+    const id = setInterval(() => setUploadSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [busy]);
 
   function pickFile(f: File | null) {
     if (!f) return;
@@ -51,24 +75,35 @@ export function UploadForm() {
     if (!file) return;
     setBusy(true);
     setError(null);
+    setUploadPct(0);
     try {
-      const { id } = await uploadVideo(file, {
-        provider: provider || undefined,
-        ...(isOpenAI ? { model, sampleFps, visionDetail, useAudio, targetLang } : {}),
-      });
+      const { id } = await uploadVideo(
+        file,
+        {
+          provider: provider || undefined,
+          brand: brand || undefined,
+          modelName: modelName || undefined,
+          trim: trim || undefined,
+          ...(isOpenAI ? { model, sampleFps, visionDetail, useAudio, targetLang } : {}),
+        },
+        (frac) => setUploadPct(frac),
+      );
       router.push(`/jobs/${id}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
       setBusy(false);
     }
   }
+
+  const inputCls =
+    "border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm w-full";
 
   return (
     <form
       onSubmit={onSubmit}
       className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-6 space-y-4"
     >
+      {/* Drop zone */}
       <div>
         <label className="block text-sm font-medium mb-1">Video file</label>
         <div
@@ -84,22 +119,31 @@ export function UploadForm() {
           }}
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
-          className={`flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-6 py-8 text-center cursor-pointer transition-colors ${
+          className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-6 text-center cursor-pointer transition-colors ${
             dragOver
               ? "border-neutral-900 dark:border-neutral-100 bg-neutral-100 dark:bg-neutral-800"
-              : "border-neutral-300 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-600"
+              : file
+                ? "border-green-500/60 bg-green-50/50 dark:bg-green-950/20"
+                : "border-neutral-300 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-600"
           }`}
         >
-          {file ? (
+          {file && fileUrl ? (
             <>
-              <p className="text-sm font-medium">{file.name}</p>
+              <video
+                src={fileUrl}
+                muted
+                className="w-48 max-h-28 rounded border border-neutral-200 dark:border-neutral-800 bg-black"
+              />
+              <p className="text-sm font-medium flex items-center gap-1">
+                <span className="text-green-600">✓</span> {file.name}
+              </p>
               <p className="text-xs text-neutral-500">
                 {(file.size / (1024 * 1024)).toFixed(1)} MB — click or drop to replace
               </p>
             </>
           ) : (
             <>
-              <p className="text-sm font-medium">Drag & drop a video here</p>
+              <p className="text-sm font-medium">Drag &amp; drop a video here</p>
               <p className="text-xs text-neutral-500">or click to browse</p>
             </>
           )}
@@ -113,109 +157,117 @@ export function UploadForm() {
         />
       </div>
 
-      <div>
-        <label className="block text-sm font-medium mb-1">Provider</label>
-        <select
-          value={provider}
-          onChange={(e) => setProvider(e.target.value)}
-          className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm"
-        >
-          <option value="openai">openai (frame sampling)</option>
-          <option value="mock">mock</option>
-          <option value="gemini">gemini</option>
-          <option value="claude_frames">claude_frames</option>
-        </select>
+      {/* Vehicle metadata (optional) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label className="block text-sm font-medium mb-1">Marke</label>
+          <input value={brand} onChange={(e) => setBrand(e.target.value)}
+            placeholder="z. B. BMW" className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Modell</label>
+          <input value={modelName} onChange={(e) => setModelName(e.target.value)}
+            placeholder="z. B. i5" className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Trim</label>
+          <input value={trim} onChange={(e) => setTrim(e.target.value)}
+            placeholder="z. B. M Sport" className={inputCls} />
+        </div>
       </div>
 
-      {isOpenAI && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-neutral-200 dark:border-neutral-800 pt-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Model</label>
-            <input
-              list="model-options"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm w-full"
-            />
-            <datalist id="model-options">
-              {MODELS.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Frame sampling (per s)
-            </label>
-            <input
-              type="number"
-              min={0.1}
-              max={10}
-              step={0.1}
-              value={sampleFps}
-              onChange={(e) => setSampleFps(parseFloat(e.target.value) || 1.0)}
-              className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm w-full"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Vision detail</label>
-            <select
-              value={visionDetail}
-              onChange={(e) => setVisionDetail(e.target.value)}
-              className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm w-full"
-            >
-              <option value="high">high</option>
-              <option value="low">low</option>
-              <option value="auto">auto</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Transcript language</label>
-            <select
-              value={targetLang}
-              onChange={(e) => setTargetLang(e.target.value)}
-              className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm w-full"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-neutral-500 mt-1">
-              Transcript is always created and translated into this language.
-            </p>
-          </div>
-
-          <div className="sm:col-span-3">
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <input
-                type="checkbox"
-                checked={useAudio}
-                onChange={(e) => setUseAudio(e.target.checked)}
-                className="h-4 w-4"
-              />
-              Use voiceover for analysis
-            </label>
-            <p className="text-xs text-neutral-500 mt-1">
-              On: also derive atomic facts &amp; features from the transcript and feed voiceover
-              hints to the vision stage (fused with the visual results). Off: vision-only — the
-              transcript is still created and shown.
-            </p>
-          </div>
+      {/* Options block */}
+      <div className="border-t border-neutral-200 dark:border-neutral-800 pt-4 space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">Provider</label>
+          <select
+            value={provider}
+            onChange={(e) => setProvider(e.target.value)}
+            className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm"
+          >
+            <option value="openai">openai (frame sampling)</option>
+            <option value="mock">mock</option>
+            <option value="gemini">gemini</option>
+            <option value="claude_frames">claude_frames</option>
+          </select>
         </div>
-      )}
+
+        {isOpenAI && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Model</label>
+              <input list="model-options" value={model}
+                onChange={(e) => setModel(e.target.value)} className={inputCls} />
+              <datalist id="model-options">
+                {MODELS.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Frame sampling (per s)</label>
+              <input type="number" min={0.1} max={10} step={0.1} value={sampleFps}
+                onChange={(e) => setSampleFps(parseFloat(e.target.value) || 1.0)}
+                className={inputCls} />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Vision detail</label>
+              <select value={visionDetail} onChange={(e) => setVisionDetail(e.target.value)}
+                className={inputCls}>
+                <option value="high">high</option>
+                <option value="low">low</option>
+                <option value="auto">auto</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Transcript language</label>
+              <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)}
+                className={inputCls}>
+                {LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="sm:col-span-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={useAudio}
+                  onChange={(e) => setUseAudio(e.target.checked)} className="h-4 w-4" />
+                Use voiceover for analysis
+              </label>
+              <p className="text-xs text-neutral-500 mt-1">
+                On: also derive atomic facts &amp; features from the transcript and feed voiceover
+                hints to the vision stage. Off: vision-only — transcript is still created.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
 
       <button
         type="submit"
         disabled={!file || busy}
         className="bg-neutral-900 dark:bg-neutral-100 text-neutral-50 dark:text-neutral-900 px-4 py-2 rounded text-sm font-medium disabled:opacity-50"
       >
-        {busy ? "Uploading…" : "Analyze"}
+        {busy ? "Hochladen…" : "Analyze"}
       </button>
+
+      {busy && (
+        <div>
+          <div className="h-1.5 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+            <div className="h-full bg-neutral-900 dark:bg-neutral-100 transition-all"
+              style={{ width: `${Math.round(uploadPct * 100)}%` }} />
+          </div>
+          <p className="text-xs text-neutral-500 mt-1">
+            Hochladen… {Math.round(uploadPct * 100)}% · {uploadSeconds}s
+          </p>
+        </div>
+      )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
     </form>

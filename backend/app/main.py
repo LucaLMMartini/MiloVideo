@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from .config import settings
 from .jobs import schedule
-from .schemas import Job, JobCreated
+from .schemas import Job, JobCreated, JobMetaUpdate
 from .storage import (
     list_jobs,
     load_job,
@@ -58,6 +58,9 @@ async def create_job(
     vision_detail: str | None = Form(default=None),
     use_audio: bool | None = Form(default=None),
     target_lang: str | None = Form(default=None),
+    brand: str | None = Form(default=None),
+    model_name: str | None = Form(default=None),
+    trim: str | None = Form(default=None),
 ) -> JobCreated:
     if not video.filename:
         raise HTTPException(400, "Missing filename.")
@@ -86,6 +89,9 @@ async def create_job(
         vision_detail=vision_detail,
         use_audio=use_audio,
         target_lang=target_lang,
+        brand=brand,
+        model_name=model_name,
+        trim=trim,
     )
     schedule(job.id, dest)
     return JobCreated(id=job.id, status=job.status)
@@ -101,6 +107,18 @@ def get_job(job_id: str) -> Job:
     job = load_job(job_id)
     if job is None:
         raise HTTPException(404, "Job not found.")
+    return job
+
+
+@app.patch("/jobs/{job_id}", response_model=Job)
+def update_job_meta(job_id: str, meta: JobMetaUpdate) -> Job:
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    job.brand = meta.brand
+    job.model_name = meta.model_name
+    job.trim = meta.trim
+    save_job(job)
     return job
 
 

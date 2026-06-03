@@ -10,6 +10,7 @@ import {
   generateReport,
   getJob,
   getReport,
+  updateJobMeta,
   type Job,
 } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -31,6 +32,29 @@ export default function JobPage({ params }: PageProps) {
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportUrl, setReportUrl] = useState<string | null>(null);
   const [reportSeconds, setReportSeconds] = useState(0);
+  const [meta, setMeta] = useState({ brand: "", model_name: "", trim: "" });
+  const metaInit = useRef(false);
+
+  // Initialise the editable vehicle metadata once, from the loaded job.
+  useEffect(() => {
+    if (job && !metaInit.current) {
+      setMeta({ brand: job.brand ?? "", model_name: job.model_name ?? "", trim: job.trim ?? "" });
+      metaInit.current = true;
+    }
+  }, [job]);
+
+  async function saveMeta() {
+    if (!job) return;
+    try {
+      await updateJobMeta(job.id, {
+        brand: meta.brand,
+        modelName: meta.model_name,
+        trim: meta.trim,
+      });
+    } catch {
+      /* best-effort; the field keeps the typed value */
+    }
+  }
 
   // Count up elapsed seconds while the report is being generated.
   useEffect(() => {
@@ -129,6 +153,23 @@ export default function JobPage({ params }: PageProps) {
               {job.id} · {(job.size_bytes / (1024 * 1024)).toFixed(1)} MB · {job.provider}
               {durationSec != null && ` · ⏱ ${formatDuration(durationSec)}`}
             </p>
+
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              {([
+                ["brand", "Marke"],
+                ["model_name", "Modell"],
+                ["trim", "Trim"],
+              ] as const).map(([key, label]) => (
+                <input
+                  key={key}
+                  value={meta[key]}
+                  onChange={(e) => setMeta((m) => ({ ...m, [key]: e.target.value }))}
+                  onBlur={saveMeta}
+                  placeholder={label}
+                  className="border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-xs w-full"
+                />
+              ))}
+            </div>
           </div>
           <video
             ref={videoRef}

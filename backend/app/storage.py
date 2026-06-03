@@ -76,6 +76,9 @@ def new_job(
     vision_detail: str | None = None,
     use_audio: bool | None = None,
     target_lang: str | None = None,
+    brand: str | None = None,
+    model_name: str | None = None,
+    trim: str | None = None,
 ) -> Job:
     now = _now()
     job = Job(
@@ -91,6 +94,9 @@ def new_job(
         vision_detail=vision_detail,
         use_audio=use_audio,
         target_lang=target_lang,
+        brand=brand,
+        model_name=model_name,
+        trim=trim,
     )
     save_job(job)
     return job

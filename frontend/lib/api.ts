@@ -67,6 +67,9 @@ export interface Job {
   vision_detail?: string | null;
   use_audio?: boolean | null;
   target_lang?: string | null;
+  brand?: string | null;
+  model_name?: string | null;
+  trim?: string | null;
   error?: string | null;
   result?: FactSheet | null;
   report_path?: string | null;
@@ -126,9 +129,17 @@ export interface RunConfig {
   visionDetail?: string;
   useAudio?: boolean;
   targetLang?: string;
+  brand?: string;
+  modelName?: string;
+  trim?: string;
 }
 
-export async function uploadVideo(file: File, cfg: RunConfig = {}): Promise<{ id: string }> {
+// Uses XHR so we can report upload progress (fetch can't).
+export function uploadVideo(
+  file: File,
+  cfg: RunConfig = {},
+  onProgress?: (fraction: number) => void,
+): Promise<{ id: string }> {
   const fd = new FormData();
   fd.append("video", file);
   if (cfg.provider) fd.append("provider", cfg.provider);
@@ -137,7 +148,45 @@ export async function uploadVideo(file: File, cfg: RunConfig = {}): Promise<{ id
   if (cfg.visionDetail) fd.append("vision_detail", cfg.visionDetail);
   if (cfg.useAudio != null) fd.append("use_audio", String(cfg.useAudio));
   if (cfg.targetLang) fd.append("target_lang", cfg.targetLang);
-  const r = await fetch(`${API_BASE}/jobs`, { method: "POST", body: fd });
-  if (!r.ok) throw new Error(`uploadVideo: ${r.status} ${await r.text()}`);
+  if (cfg.brand) fd.append("brand", cfg.brand);
+  if (cfg.modelName) fd.append("model_name", cfg.modelName);
+  if (cfg.trim) fd.append("trim", cfg.trim);
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/jobs`);
+    xhr.upload.onprogress = (e) => {
+      if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          reject(new Error("uploadVideo: invalid response"));
+        }
+      } else {
+        reject(new Error(`uploadVideo: ${xhr.status} ${xhr.responseText}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("uploadVideo: network error"));
+    xhr.send(fd);
+  });
+}
+
+export async function updateJobMeta(
+  jobId: string,
+  meta: { brand?: string; modelName?: string; trim?: string },
+): Promise<Job> {
+  const r = await fetch(`${API_BASE}/jobs/${jobId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brand: meta.brand || null,
+      model_name: meta.modelName || null,
+      trim: meta.trim || null,
+    }),
+  });
+  if (!r.ok) throw new Error(`updateJobMeta: ${r.status}`);
   return r.json();
 }

@@ -102,6 +102,10 @@ class Job(BaseModel):
     vision_detail: str | None = None
     use_audio: bool | None = None
     target_lang: str | None = None
+    # User-provided vehicle metadata (optional, editable after upload).
+    brand: str | None = None
+    model_name: str | None = None
+    trim: str | None = None
     error: str | None = None
     result: FactSheet | None = None
     report_path: str | None = None
@@ -110,3 +114,10 @@ class Job(BaseModel):
 class JobCreated(BaseModel):
     id: str
     status: JobStatus
+
+
+class JobMetaUpdate(BaseModel):
+    """Editable vehicle metadata for a job."""
+    brand: str | None = None
+    model_name: str | None = None
+    trim: str | None = None
