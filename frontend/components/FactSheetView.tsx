@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import {
   frameUrl,
   searchTerms,
+  updateFactItem,
   type AtomicFact,
   type Evidence,
   type FactSheet,
   type Feature,
+  type Job,
 } from "@/lib/api";
 import { Lightbox } from "@/components/Lightbox";
 
@@ -31,8 +33,6 @@ function evidenceText(ev: Evidence[]): string {
   return ev.map((e) => `${e.note ?? ""} ${e.quote ?? ""}`).join(" ");
 }
 
-// One evidence entry: timestamp chip (seek) + a screenshot toggle that lazily
-// loads a small thumbnail only when clicked (so we don't render every frame).
 function EvidenceItem({
   e,
   jobId,
@@ -75,12 +75,7 @@ function EvidenceItem({
         </button>
       </div>
       {show && (
-        <button
-          type="button"
-          onClick={() => onOpenImage(src, alt)}
-          title="Screenshot vergrößern"
-          className="block"
-        >
+        <button type="button" onClick={() => onOpenImage(src, alt)} title="Screenshot vergrößern" className="block">
           <img
             src={src}
             alt={alt}
@@ -114,21 +109,151 @@ function EvidenceList({
   );
 }
 
+type Entry =
+  | { kind: "fact"; index: number; item: AtomicFact }
+  | { kind: "feature"; index: number; item: Feature };
+
+function ItemCard({
+  entry,
+  jobId,
+  onSeek,
+  onOpenImage,
+  onJobUpdate,
+}: {
+  entry: Entry;
+  jobId: string;
+  onSeek: (t: number) => void;
+  onOpenImage: (src: string, alt: string) => void;
+  onJobUpdate: (job: Job) => void;
+}) {
+  const title = entry.kind === "fact" ? entry.item.fact : entry.item.label;
+  const desc = entry.kind === "feature" ? entry.item.description ?? "" : "";
+  const status = entry.item.status;
+
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(title);
+  const [editDesc, setEditDesc] = useState(desc);
+  const [saving, setSaving] = useState(false);
+
+  async function apply(patch: Partial<{ status: typeof status; fact: string; label: string; description: string }>) {
+    setSaving(true);
+    try {
+      const job = await updateFactItem(jobId, { kind: entry.kind, index: entry.index, ...patch });
+      onJobUpdate(job);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveEdit() {
+    if (entry.kind === "fact") await apply({ fact: editTitle });
+    else await apply({ label: editTitle, description: editDesc });
+    setEditing(false);
+  }
+
+  const rejected = status === "rejected";
+  const verified = status === "verified";
+
+  return (
+    <li
+      className={`border rounded p-3 ${
+        rejected
+          ? "border-neutral-200 dark:border-neutral-800 opacity-60"
+          : verified
+            ? "border-green-500/50 bg-green-50/40 dark:bg-green-950/20"
+            : "border-neutral-200 dark:border-neutral-800"
+      }`}
+    >
+      {editing ? (
+        <div className="space-y-2">
+          <input
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            className="w-full border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm"
+          />
+          {entry.kind === "feature" && (
+            <textarea
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+              rows={2}
+              placeholder="Beschreibung"
+              className="w-full border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-2 py-1 text-sm"
+            />
+          )}
+          <div className="flex gap-2">
+            <button type="button" onClick={saveEdit} disabled={saving}
+              className="rounded bg-neutral-900 dark:bg-neutral-100 text-neutral-50 dark:text-neutral-900 px-3 py-1 text-xs font-medium disabled:opacity-50">
+              Speichern
+            </button>
+            <button type="button" onClick={() => { setEditing(false); setEditTitle(title); setEditDesc(desc); }}
+              className="rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1 text-xs">
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-start justify-between gap-2">
+            <p className={`text-sm font-medium ${rejected ? "line-through" : ""}`}>{title}</p>
+            {verified && <span className="shrink-0 text-xs text-green-600">✓ geprüft</span>}
+            {rejected && <span className="shrink-0 text-xs text-red-600">✕ nicht im Bericht</span>}
+          </div>
+          {entry.kind === "feature" && desc && (
+            <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-0.5">{desc}</p>
+          )}
+          {entry.kind === "fact" && entry.item.vehicle_model && (
+            <p className="text-xs text-neutral-500 mt-0.5">{entry.item.vehicle_model}</p>
+          )}
+          <EvidenceList evidence={entry.item.evidence} jobId={jobId} onSeek={onSeek} onOpenImage={onOpenImage} />
+
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button type="button" disabled={saving}
+              onClick={() => apply({ status: verified ? "unreviewed" : "verified" })}
+              className={`rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
+                verified
+                  ? "border-green-500 text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/30"
+                  : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              }`}>
+              ✓ Geprüft
+            </button>
+            <button type="button" disabled={saving} onClick={() => setEditing(true)}
+              className="rounded border border-neutral-300 dark:border-neutral-700 px-2 py-0.5 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50">
+              ✎ Bearbeiten
+            </button>
+            {rejected ? (
+              <button type="button" disabled={saving} onClick={() => apply({ status: "unreviewed" })}
+                className="rounded border border-neutral-300 dark:border-neutral-700 px-2 py-0.5 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50">
+                ↩ Wiederherstellen
+              </button>
+            ) : (
+              <button type="button" disabled={saving} onClick={() => apply({ status: "rejected" })}
+                className="rounded border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 px-2 py-0.5 text-xs hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50">
+                ✕ Falsch
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </li>
+  );
+}
+
 export function FactSheetView({
   sheet,
   jobId,
   onSeek,
+  onJobUpdate,
 }: {
   sheet: FactSheet;
   jobId: string;
   onSeek: (t: number) => void;
+  onJobUpdate: (job: Job) => void;
 }) {
   const [query, setQuery] = useState("");
   const [terms, setTerms] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
 
-  // Expand the query into synonyms + DE/EN equivalents (debounced).
   useEffect(() => {
     const q = query.trim();
     if (q.length < 2) {
@@ -143,7 +268,7 @@ export function FactSheetView({
         const t = await searchTerms(q);
         if (!cancelled) setTerms(t.length ? t : [q.toLowerCase()]);
       } catch {
-        if (!cancelled) setTerms([q.toLowerCase()]); // fall back to plain substring
+        if (!cancelled) setTerms([q.toLowerCase()]);
       } finally {
         if (!cancelled) setSearching(false);
       }
@@ -160,16 +285,18 @@ export function FactSheetView({
     return terms.some((t) => h.includes(t));
   };
 
-  const facts = active
-    ? sheet.atomic_facts.filter((f) =>
-        matches(`${f.fact} ${f.vehicle_model ?? ""} ${evidenceText(f.evidence)}`),
-      )
-    : sheet.atomic_facts;
-  const features = active
-    ? sheet.features.filter((f) =>
-        matches(`${f.label} ${f.description ?? ""} ${evidenceText(f.evidence)}`),
-      )
-    : sheet.features;
+  const factEntries: Entry[] = sheet.atomic_facts
+    .map((item, index) => ({ kind: "fact" as const, index, item }))
+    .filter(({ item }) =>
+      !active || matches(`${item.fact} ${item.vehicle_model ?? ""} ${evidenceText(item.evidence)}`),
+    );
+  const featureEntries: Entry[] = sheet.features
+    .map((item, index) => ({ kind: "feature" as const, index, item }))
+    .filter(({ item }) =>
+      !active || matches(`${item.label} ${item.description ?? ""} ${evidenceText(item.evidence)}`),
+    );
+
+  const onOpenImage = (src: string, alt: string) => setLightbox({ src, alt });
 
   return (
     <div className="space-y-6">
@@ -182,7 +309,6 @@ export function FactSheetView({
         </p>
       )}
 
-      {/* Search across facts & features — matches synonyms + DE/EN equivalents. */}
       <div>
         <input
           type="search"
@@ -196,9 +322,7 @@ export function FactSheetView({
             {searching
               ? "Suche…"
               : active
-                ? `Treffer: ${facts.length} Fakten, ${features.length} Features · auch: ${terms
-                    .slice(0, 8)
-                    .join(", ")}`
+                ? `Treffer: ${factEntries.length} Fakten, ${featureEntries.length} Features · auch: ${terms.slice(0, 8).join(", ")}`
                 : "Keine verwandten Begriffe gefunden."}
           </p>
         )}
@@ -206,31 +330,16 @@ export function FactSheetView({
 
       <section>
         <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 mb-2">
-          Atomic facts ({facts.length}
+          Atomic facts ({factEntries.length}
           {active ? ` / ${sheet.atomic_facts.length}` : ""})
         </h3>
-        {facts.length === 0 ? (
-          <p className="text-sm text-neutral-500">
-            {active ? "Keine Treffer." : "None reported."}
-          </p>
+        {factEntries.length === 0 ? (
+          <p className="text-sm text-neutral-500">{active ? "Keine Treffer." : "None reported."}</p>
         ) : (
           <ul className="space-y-3">
-            {facts.map((f: AtomicFact, i) => (
-              <li
-                key={i}
-                className="border border-neutral-200 dark:border-neutral-800 rounded p-3"
-              >
-                <p className="text-sm font-medium">{f.fact}</p>
-                {f.vehicle_model && (
-                  <p className="text-xs text-neutral-500 mt-0.5">{f.vehicle_model}</p>
-                )}
-                <EvidenceList
-                  evidence={f.evidence}
-                  jobId={jobId}
-                  onSeek={onSeek}
-                  onOpenImage={(src, alt) => setLightbox({ src, alt })}
-                />
-              </li>
+            {factEntries.map((entry) => (
+              <ItemCard key={entry.index} entry={entry} jobId={jobId} onSeek={onSeek}
+                onOpenImage={onOpenImage} onJobUpdate={onJobUpdate} />
             ))}
           </ul>
         )}
@@ -238,33 +347,16 @@ export function FactSheetView({
 
       <section>
         <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 mb-2">
-          Recognized features ({features.length}
+          Recognized features ({featureEntries.length}
           {active ? ` / ${sheet.features.length}` : ""})
         </h3>
-        {features.length === 0 ? (
-          <p className="text-sm text-neutral-500">
-            {active ? "Keine Treffer." : "None reported."}
-          </p>
+        {featureEntries.length === 0 ? (
+          <p className="text-sm text-neutral-500">{active ? "Keine Treffer." : "None reported."}</p>
         ) : (
           <ul className="space-y-3">
-            {features.map((f: Feature, i) => (
-              <li
-                key={i}
-                className="border border-neutral-200 dark:border-neutral-800 rounded p-3"
-              >
-                <p className="text-sm font-medium">{f.label}</p>
-                {f.description && (
-                  <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-0.5">
-                    {f.description}
-                  </p>
-                )}
-                <EvidenceList
-                  evidence={f.evidence}
-                  jobId={jobId}
-                  onSeek={onSeek}
-                  onOpenImage={(src, alt) => setLightbox({ src, alt })}
-                />
-              </li>
+            {featureEntries.map((entry) => (
+              <ItemCard key={entry.index} entry={entry} jobId={jobId} onSeek={onSeek}
+                onOpenImage={onOpenImage} onJobUpdate={onJobUpdate} />
             ))}
           </ul>
         )}

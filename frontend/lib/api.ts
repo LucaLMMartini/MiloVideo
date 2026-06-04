@@ -11,16 +11,20 @@ export interface Evidence {
   note?: string | null;
 }
 
+export type ReviewStatus = "unreviewed" | "verified" | "rejected";
+
 export interface AtomicFact {
   fact: string;
   vehicle_model?: string | null;
   evidence: Evidence[];
+  status: ReviewStatus;
 }
 
 export interface Feature {
   label: string;
   description?: string | null;
   evidence: Evidence[];
+  status: ReviewStatus;
 }
 
 export interface TranscriptSegment {
@@ -77,6 +81,25 @@ export interface Job {
 
 export function frameUrl(jobId: string, t: number): string {
   return `${API_BASE}/jobs/${jobId}/frame?t=${t}`;
+}
+
+export interface FactItemUpdate {
+  kind: "fact" | "feature";
+  index: number;
+  status?: ReviewStatus;
+  fact?: string;
+  label?: string;
+  description?: string;
+}
+
+export async function updateFactItem(jobId: string, upd: FactItemUpdate): Promise<Job> {
+  const r = await fetch(`${API_BASE}/jobs/${jobId}/items`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(upd),
+  });
+  if (!r.ok) throw new Error(`updateFactItem: ${r.status} ${await r.text()}`);
+  return r.json();
 }
 
 export async function generateReport(jobId: string): Promise<Blob> {

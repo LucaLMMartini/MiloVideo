@@ -37,15 +37,19 @@ def _fmt_ts(t: float) -> str:
 
 
 def _items_from_sheet(sheet: FactSheet) -> list[dict]:
-    """Flatten facts + features into an indexed list with their evidence."""
+    """Flatten facts + features into an indexed list, skipping rejected ones."""
     items: list[dict] = []
     for f in sheet.atomic_facts:
+        if f.status == "rejected":
+            continue
         items.append({
             "kind": "fact",
             "text": f.fact,
             "evidence": [e.model_dump() for e in f.evidence],
         })
     for f in sheet.features:
+        if f.status == "rejected":
+            continue
         label = f.label + (f": {f.description}" if f.description else "")
         items.append({
             "kind": "feature",

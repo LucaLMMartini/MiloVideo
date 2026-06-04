@@ -193,7 +193,7 @@ export default function JobPage({ params }: PageProps) {
           </h2>
           {job.result ? (
             <>
-              <FactSheetView sheet={job.result} jobId={job.id} onSeek={seekTo} />
+              <FactSheetView sheet={job.result} jobId={job.id} onSeek={seekTo} onJobUpdate={setJob} />
               {job.result.transcript && (
                 <details className="mt-6" open>
                   <summary className="text-sm font-semibold uppercase tracking-wide text-neutral-500 cursor-pointer">

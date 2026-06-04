@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from .config import settings
 from .jobs import schedule
-from .schemas import Job, JobCreated, JobMetaUpdate
+from .report import render_markdown
+from .schemas import FactItemUpdate, Job, JobCreated, JobMetaUpdate
 from .storage import (
     list_jobs,
     load_job,
@@ -119,6 +120,35 @@ def update_job_meta(job_id: str, meta: JobMetaUpdate) -> Job:
     job.model_name = meta.model_name
     job.trim = meta.trim
     save_job(job)
+    return job
+
+
+@app.patch("/jobs/{job_id}/items", response_model=Job)
+def update_fact_item(job_id: str, upd: FactItemUpdate) -> Job:
+    """Review a single fact/feature: set its status and/or edit its text."""
+    job = load_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    if job.result is None:
+        raise HTTPException(409, "Analysis is not finished yet.")
+
+    items = job.result.atomic_facts if upd.kind == "fact" else job.result.features
+    if not (0 <= upd.index < len(items)):
+        raise HTTPException(404, "Item index out of range.")
+    item = items[upd.index]
+
+    if upd.status is not None:
+        item.status = upd.status
+    if upd.kind == "fact" and upd.fact is not None:
+        item.fact = upd.fact
+    if upd.kind == "feature":
+        if upd.label is not None:
+            item.label = upd.label
+        if upd.description is not None:
+            item.description = upd.description
+
+    save_job(job)
+    report_path(job.id).write_text(render_markdown(job, job.result))
     return job
 
 

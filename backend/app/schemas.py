@@ -36,6 +36,7 @@ class AtomicFact(BaseModel):
         default=None, description="The car model this fact pertains to."
     )
     evidence: list[Evidence] = []
+    status: Literal["unreviewed", "verified", "rejected"] = "unreviewed"
 
 
 class Feature(BaseModel):
@@ -47,6 +48,7 @@ class Feature(BaseModel):
     label: str
     description: str | None = None
     evidence: list[Evidence] = []
+    status: Literal["unreviewed", "verified", "rejected"] = "unreviewed"
 
 
 class TranscriptSegment(BaseModel):
@@ -121,3 +123,13 @@ class JobMetaUpdate(BaseModel):
     brand: str | None = None
     model_name: str | None = None
     trim: str | None = None
+
+
+class FactItemUpdate(BaseModel):
+    """Review action on a single atomic fact or feature of a job's result."""
+    kind: Literal["fact", "feature"]
+    index: int
+    status: Literal["unreviewed", "verified", "rejected"] | None = None
+    fact: str | None = None
+    label: str | None = None
+    description: str | None = None
