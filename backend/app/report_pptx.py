@@ -292,9 +292,9 @@ def _add_section_slides(prs, section: dict, items: list[dict], load_frame):
             p = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
             r = p.add_run(); r.text = "• " + it["text"] + " "
             r.font.size = Pt(15); r.font.color.rgb = DARK
-            # Small superscript-style reference number into the Quellenverzeichnis.
+            # Small, unobtrusive reference number into the Quellenverzeichnis.
             ref = p.add_run(); ref.text = f"[{i + 1}]"
-            ref.font.size = Pt(11); ref.font.color.rgb = ACCENT
+            ref.font.size = Pt(9); ref.font.color.rgb = GRAY
             p.space_after = Pt(6)
 
         if has_img:
