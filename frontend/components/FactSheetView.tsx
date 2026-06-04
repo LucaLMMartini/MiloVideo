@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   frameUrl,
-  searchTerms,
   updateFactItem,
   type AtomicFact,
   type Evidence,
@@ -241,45 +240,19 @@ function ItemCard({
 export function FactSheetView({
   sheet,
   jobId,
+  terms,
   onSeek,
   onJobUpdate,
 }: {
   sheet: FactSheet;
   jobId: string;
+  terms: string[];
   onSeek: (t: number) => void;
   onJobUpdate: (job: Job) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [terms, setTerms] = useState<string[]>([]);
-  const [searching, setSearching] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
 
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) {
-      setTerms([]);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    let cancelled = false;
-    const id = setTimeout(async () => {
-      try {
-        const t = await searchTerms(q);
-        if (!cancelled) setTerms(t.length ? t : [q.toLowerCase()]);
-      } catch {
-        if (!cancelled) setTerms([q.toLowerCase()]);
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(id);
-    };
-  }, [query]);
-
-  const active = query.trim().length >= 2 && terms.length > 0;
+  const active = terms.length > 0;
   const matches = (text: string) => {
     const h = text.toLowerCase();
     return terms.some((t) => h.includes(t));
@@ -309,24 +282,11 @@ export function FactSheetView({
         </p>
       )}
 
-      <div>
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Suche in Fakten & Features (z. B. „Nachrichten“ findet auch „messages“, „sms“)…"
-          className="w-full border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-3 py-2 text-sm"
-        />
-        {query.trim().length >= 2 && (
-          <p className="text-xs text-neutral-500 mt-1">
-            {searching
-              ? "Suche…"
-              : active
-                ? `Treffer: ${factEntries.length} Fakten, ${featureEntries.length} Features · auch: ${terms.slice(0, 8).join(", ")}`
-                : "Keine verwandten Begriffe gefunden."}
-          </p>
-        )}
-      </div>
+      {active && (
+        <p className="text-xs text-neutral-500">
+          {`Treffer: ${factEntries.length} Fakten, ${featureEntries.length} Features · auch: ${terms.slice(0, 8).join(", ")}`}
+        </p>
+      )}
 
       <section>
         <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 mb-2">

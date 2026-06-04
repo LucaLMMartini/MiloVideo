@@ -101,7 +101,7 @@ def _outline_llm(items: list[dict], vehicle: str) -> dict:
     )
     client = OpenAI(api_key=settings.openai_api_key)
     resp = client.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_report_model,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
     )
@@ -187,6 +187,7 @@ def _frame_loader(video_path: Path | None):
 SLIDE_W = Inches(13.333)
 SLIDE_H = Inches(7.5)
 ITEMS_PER_SLIDE = 6
+MAX_EMBED_MB = 100  # above this, embed a poster frame instead of the whole video
 
 
 def _textbox(slide, left, top, width, height):
@@ -344,15 +345,26 @@ def _add_sources_slides(prs, items: list[dict], job: Job, video_path: Path | Non
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _title_bar(slide, "Quellenverzeichnis")
 
+    # Embedding inflates the file by the whole video; only embed reasonably small ones,
+    # otherwise drop in a poster frame so the deck stays openable and downloads fast.
     has_video = False
     if video_path:
-        has_video = _embed_movie(
-            slide, video_path, load_frame, Inches(0.6), Inches(1.4), Inches(6.4), Inches(3.6)
-        )
+        size_mb = video_path.stat().st_size / 1e6 if video_path.exists() else 0
+        if size_mb <= MAX_EMBED_MB:
+            has_video = _embed_movie(
+                slide, video_path, load_frame, Inches(0.6), Inches(1.4), Inches(6.4), Inches(3.6)
+            )
+            caption = f"Video: {job.filename}"
+        if not has_video:
+            poster = load_frame(1.0) or load_frame(0.0)
+            if poster:
+                slide.shapes.add_picture(BytesIO(poster), Inches(0.6), Inches(1.4), width=Inches(6.4))
+                has_video = True
+            caption = f"Video: {job.filename} ({size_mb:.0f} MB — Vorschau, zu groß zum Einbetten)"
         if has_video:
             cap = _textbox(slide, Inches(0.6), Inches(5.05), Inches(6.4), Inches(0.4))
             rc = cap.paragraphs[0].add_run()
-            rc.text = f"Video: {job.filename}"; rc.font.size = Pt(10); rc.font.color.rgb = GRAY
+            rc.text = caption; rc.font.size = Pt(10); rc.font.color.rgb = GRAY
 
     if has_video:
         tf = _textbox(slide, Inches(7.2), Inches(1.4), Inches(5.5), Inches(5.6))

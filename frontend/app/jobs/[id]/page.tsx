@@ -10,6 +10,7 @@ import {
   generateReport,
   getJob,
   getReport,
+  searchTerms,
   updateJobMeta,
   type Job,
 } from "@/lib/api";
@@ -34,6 +35,63 @@ export default function JobPage({ params }: PageProps) {
   const [reportSeconds, setReportSeconds] = useState(0);
   const [meta, setMeta] = useState({ brand: "", model_name: "", trim: "" });
   const metaInit = useRef(false);
+  const [query, setQuery] = useState("");
+  const [terms, setTerms] = useState<string[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  // Expand the search query into synonyms + DE/EN equivalents (debounced).
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setTerms([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const id = setTimeout(async () => {
+      try {
+        const t = await searchTerms(q);
+        if (!cancelled) setTerms(t.length ? t : [q.toLowerCase()]);
+      } catch {
+        if (!cancelled) setTerms([q.toLowerCase()]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [query]);
+
+  function downloadTranscript() {
+    const t = job?.result?.transcript;
+    if (!t) return;
+    const esc = (s: string | null | undefined) =>
+      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const ts = (n: number) => {
+      const s = Math.floor(n) % 60;
+      const m = Math.floor(n / 60);
+      return `${m}:${String(s).padStart(2, "0")}`;
+    };
+    const segs = t.segments?.length
+      ? t.segments.map((s) => `<p><b>${ts(s.t_start)}</b> ${esc(s.text)}</p>`).join("")
+      : `<p>${esc(t.text)}</p>`;
+    const html =
+      `<html><head><meta charset="utf-8"></head><body>` +
+      `<h1>Transkript — ${esc(job?.filename)}</h1>` +
+      (t.translated_text
+        ? `<h2>Übersetzung (${esc(t.target_language)})</h2><p>${esc(t.translated_text)}</p>`
+        : "") +
+      `<h2>Original${t.language ? ` (${esc(t.language)})` : ""}</h2>${segs}</body></html>`;
+    const url = URL.createObjectURL(new Blob([html], { type: "application/msword" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${job?.filename ?? "transcript"}_Transkript.doc`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // Initialise the editable vehicle metadata once, from the loaded job.
   useEffect(() => {
@@ -170,6 +228,44 @@ export default function JobPage({ params }: PageProps) {
                 />
               ))}
             </div>
+
+            {job.result && (
+              <>
+                {/* Downloads / report — under the model inputs, side by side. */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {job.result.transcript && (
+                    <button
+                      type="button"
+                      onClick={downloadTranscript}
+                      className="inline-flex items-center gap-1 border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    >
+                      ⬇ Transkript (Word)
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onGenerateReport}
+                    disabled={reportBusy}
+                    className="inline-flex items-center gap-1 bg-neutral-900 dark:bg-neutral-100 text-neutral-50 dark:text-neutral-900 px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
+                  >
+                    {reportBusy ? "Wird erstellt…" : reportUrl ? "🔄 PPTX neu" : "📊 PPTX erstellen"}
+                  </button>
+                  {!reportBusy && reportUrl && (
+                    <a
+                      href={reportUrl}
+                      download={`${job.filename}_Bericht.pptx`}
+                      className="inline-flex items-center gap-1 border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    >
+                      ⬇ PPTX
+                    </a>
+                  )}
+                </div>
+                {reportBusy && (
+                  <p className="text-xs text-neutral-500">Bericht wird erstellt… {reportSeconds}s</p>
+                )}
+                {reportError && <p className="text-xs text-red-600">{reportError}</p>}
+              </>
+            )}
           </div>
           <video
             ref={videoRef}
@@ -178,6 +274,25 @@ export default function JobPage({ params }: PageProps) {
             className="w-full max-h-[38vh] object-contain rounded border border-neutral-200 dark:border-neutral-800 bg-black"
           />
         </div>
+
+        {/* Search — full width at the very bottom of the header, closest to the facts. */}
+        {job.result && (
+          <div className="relative mt-3">
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Suche in Fakten & Features (z. B. „Nachrichten“ findet „messages“, „sms“)…"
+              className="w-full border border-neutral-300 dark:border-neutral-700 bg-transparent rounded px-3 py-1.5 pr-28 text-sm"
+            />
+            {searching && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 text-xs text-neutral-500">
+                <span className="inline-block w-3 h-3 border-2 border-neutral-300 border-t-neutral-600 dark:border-neutral-600 dark:border-t-neutral-200 rounded-full animate-spin" />
+                sucht…
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {job.status === "failed" && (
@@ -193,7 +308,7 @@ export default function JobPage({ params }: PageProps) {
           </h2>
           {job.result ? (
             <>
-              <FactSheetView sheet={job.result} jobId={job.id} onSeek={seekTo} onJobUpdate={setJob} />
+              <FactSheetView sheet={job.result} jobId={job.id} terms={terms} onSeek={seekTo} onJobUpdate={setJob} />
               {job.result.transcript && (
                 <details className="mt-6" open>
                   <summary className="text-sm font-semibold uppercase tracking-wide text-neutral-500 cursor-pointer">
@@ -222,43 +337,6 @@ export default function JobPage({ params }: PageProps) {
                   </article>
                 </details>
               )}
-
-              <div className="mt-8 border-t border-neutral-200 dark:border-neutral-800 pt-6">
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={onGenerateReport}
-                    disabled={reportBusy}
-                    className="bg-neutral-900 dark:bg-neutral-100 text-neutral-50 dark:text-neutral-900 px-4 py-2 rounded text-sm font-medium disabled:opacity-50"
-                  >
-                    {reportBusy
-                      ? "Wird erstellt…"
-                      : reportUrl
-                        ? "🔄 Neu erstellen"
-                        : "📊 PowerPoint-Bericht erstellen"}
-                  </button>
-
-                  {reportBusy && (
-                    <span className="text-sm text-neutral-500">
-                      Bericht wird erstellt… {reportSeconds}s
-                    </span>
-                  )}
-
-                  {!reportBusy && reportUrl && (
-                    <a
-                      href={reportUrl}
-                      download={`${job.filename}_Bericht.pptx`}
-                      className="inline-flex items-center gap-1 border border-neutral-300 dark:border-neutral-700 px-4 py-2 rounded text-sm font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                    >
-                      ⬇ Bericht herunterladen
-                    </a>
-                  )}
-                </div>
-                <p className="text-xs text-neutral-500 mt-2">
-                  Gruppiert die Fakten nach Themen, mit Belegen (Screenshots/Zitate) und Quellen.
-                </p>
-                {reportError && <p className="text-sm text-red-600 mt-2">{reportError}</p>}
-              </div>
             </>
           ) : job.status === "running" || job.status === "queued" ? (
             <ProgressView job={job} />

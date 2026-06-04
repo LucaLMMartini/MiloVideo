@@ -249,7 +249,7 @@ def search_terms(q: str = Query(..., min_length=1)):
 
             client = OpenAI(api_key=settings.openai_api_key)
             resp = client.chat.completions.create(
-                model=settings.openai_model,
+                model=settings.openai_report_model,
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": _SEARCH_EXPAND_PROMPT},

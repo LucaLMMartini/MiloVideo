@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     openai_vision_detail: str = "high"
     openai_batch_size: int = 10
 
+    # Smaller, faster model for lightweight text tasks (report outline, search expansion).
+    openai_report_model: str = "gpt-4o-mini"
+
     # Transcription always runs (for display + translation). The multimodal toggle
     # below only controls whether the transcript is USED in the analysis (hints +
     # transcript-derived facts). Whisper-1 returns segment timestamps (verbose_json).
