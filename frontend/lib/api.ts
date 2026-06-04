@@ -102,10 +102,24 @@ export async function updateFactItem(jobId: string, upd: FactItemUpdate): Promis
   return r.json();
 }
 
-export async function generateReport(jobId: string): Promise<Blob> {
-  const r = await fetch(`${API_BASE}/jobs/${jobId}/pptx`);
-  if (!r.ok) throw new Error(`report: ${r.status} ${await r.text()}`);
-  return r.blob();
+export async function startReport(jobId: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/jobs/${jobId}/pptx`, { method: "POST" });
+  if (!r.ok) throw new Error(`startReport: ${r.status} ${await r.text()}`);
+}
+
+export interface ReportStatus {
+  status: "idle" | "building" | "ready" | "error";
+  error?: string;
+}
+
+export async function reportStatus(jobId: string): Promise<ReportStatus> {
+  const r = await fetch(`${API_BASE}/jobs/${jobId}/pptx/status`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`reportStatus: ${r.status}`);
+  return r.json();
+}
+
+export function reportDownloadUrl(jobId: string): string {
+  return `${API_BASE}/jobs/${jobId}/pptx`;
 }
 
 export async function searchTerms(q: string): Promise<string[]> {

@@ -7,10 +7,12 @@ import remarkGfm from "remark-gfm";
 import {
   API_BASE,
   formatDuration,
-  generateReport,
   getJob,
   getReport,
+  reportDownloadUrl,
+  reportStatus,
   searchTerms,
+  startReport,
   updateJobMeta,
   type Job,
 } from "@/lib/api";
@@ -122,24 +124,27 @@ export default function JobPage({ params }: PageProps) {
     return () => clearInterval(id);
   }, [reportBusy]);
 
-  // Release the previous object URL when it changes / on unmount.
-  useEffect(() => {
-    return () => {
-      if (reportUrl) URL.revokeObjectURL(reportUrl);
-    };
-  }, [reportUrl]);
-
+  // Generate the PowerPoint in the background, then poll until it's ready.
   async function onGenerateReport() {
     if (!job) return;
     setReportBusy(true);
     setReportError(null);
-    setReportUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
+    setReportUrl(null);
     try {
-      const blob = await generateReport(job.id);
-      setReportUrl(URL.createObjectURL(blob));
+      await startReport(job.id);
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 180; i++) {
+        await sleep(2000);
+        const st = await reportStatus(job.id);
+        if (st.status === "ready") {
+          setReportUrl(reportDownloadUrl(job.id));
+          break;
+        }
+        if (st.status === "error") {
+          setReportError(st.error || "Unbekannter Fehler bei der Erstellung.");
+          break;
+        }
+      }
     } catch (e: unknown) {
       setReportError(e instanceof Error ? e.message : String(e));
     } finally {

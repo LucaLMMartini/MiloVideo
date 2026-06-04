@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiofiles
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
@@ -205,26 +205,72 @@ def get_frame(job_id: str, t: float = Query(0.0, ge=0, description="Timestamp in
     )
 
 
-@app.get("/jobs/{job_id}/pptx")
-def get_pptx(job_id: str):
-    """Generate a management-ready PowerPoint report from the fact-sheet."""
+# PowerPoint generation can take a minute (LLM outline + video embedding), so it runs
+# in the background and the client polls for status — a long synchronous request would
+# otherwise time out in the browser ("Failed to fetch").
+_pptx_status: dict[str, str] = {}  # job_id -> "building" | "ready" | "error: <msg>"
+
+
+def _pptx_file(job_id: str) -> Path:
+    return settings.reports_dir / f"{job_id}.pptx"
+
+
+def _build_pptx(job_id: str) -> None:
+    from .report_pptx import generate_pptx
+
+    try:
+        job = load_job(job_id)
+        if job is None or job.result is None:
+            _pptx_status[job_id] = "error: job/result missing"
+            return
+        video = upload_path(job.id, job.filename)
+        data = generate_pptx(job, job.result, video if video.exists() else None)
+        _pptx_file(job_id).write_bytes(data)
+        _pptx_status[job_id] = "ready"
+    except Exception as e:
+        log.exception("pptx build failed for %s", job_id)
+        _pptx_status[job_id] = f"error: {type(e).__name__}: {e}"
+
+
+@app.post("/jobs/{job_id}/pptx")
+def start_pptx(job_id: str, background: BackgroundTasks) -> dict:
+    """Kick off PowerPoint generation in the background."""
     job = load_job(job_id)
     if job is None:
         raise HTTPException(404, "Job not found.")
     if job.result is None:
         raise HTTPException(409, "Analysis is not finished yet.")
+    if _pptx_status.get(job_id) == "building":
+        return {"status": "building"}
+    _pptx_status[job_id] = "building"
+    _pptx_file(job_id).unlink(missing_ok=True)
+    background.add_task(_build_pptx, job_id)
+    return {"status": "building"}
 
-    from .report_pptx import generate_pptx
 
-    video = upload_path(job.id, job.filename)
-    data = generate_pptx(job, job.result, video if video.exists() else None)
+@app.get("/jobs/{job_id}/pptx/status")
+def pptx_status(job_id: str) -> dict:
+    st = _pptx_status.get(job_id)
+    if st is None:
+        return {"status": "ready" if _pptx_file(job_id).exists() else "idle"}
+    if st.startswith("error"):
+        return {"status": "error", "error": st[7:]}
+    return {"status": st}
 
-    stem = Path(job.filename).stem
+
+@app.get("/jobs/{job_id}/pptx")
+def download_pptx(job_id: str):
+    """Download the previously generated PowerPoint."""
+    p = _pptx_file(job_id)
+    if not p.exists():
+        raise HTTPException(409, "Report not generated yet.")
+    job = load_job(job_id)
+    stem = Path(job.filename).stem if job else job_id
     safe = "".join(c for c in stem if c.isalnum() or c in " _-").strip() or "report"
-    return Response(
-        content=data,
+    return FileResponse(
+        p,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        headers={"Content-Disposition": f'attachment; filename="{safe}_Bericht.pptx"'},
+        filename=f"{safe}_Bericht.pptx",
     )
 
 

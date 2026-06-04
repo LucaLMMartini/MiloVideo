@@ -101,7 +101,7 @@ def _outline_llm(items: list[dict], vehicle: str) -> dict:
     )
     client = OpenAI(api_key=settings.openai_api_key)
     resp = client.chat.completions.create(
-        model=settings.openai_report_model,
+        model=settings.openai_model,
         response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt}],
     )
