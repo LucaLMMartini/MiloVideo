@@ -121,6 +121,7 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
         batch_size: int | None = None,
         use_audio: bool | None = None,
         target_lang: str | None = None,
+        vehicle: str | None = None,
     ) -> None:
         self.model = model or settings.openai_model
         self.sample_fps = sample_fps or settings.sample_fps
@@ -129,6 +130,16 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
         # use_audio now gates only whether the transcript is USED in the analysis.
         self.use_audio = settings.openai_use_audio if use_audio is None else use_audio
         self.target_lang = _norm_lang(target_lang or settings.target_lang)
+        self.vehicle = (vehicle or "").strip()
+
+    def _vehicle_line(self) -> str:
+        """A context line injected into prompts when the user provided the vehicle."""
+        if not self.vehicle:
+            return ""
+        return (
+            f"Known vehicle (provided by the user): {self.vehicle}. Use this as the "
+            "vehicle_model unless the video clearly shows a different vehicle.\n"
+        )
 
     # -- Stage 1: transcription (OpenAI API) — ALWAYS runs ------------------
     def _transcribe(self, client, video_path: Path) -> tuple[str, list[dict], str | None]:
@@ -185,7 +196,7 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": TRANSCRIPT_FACTS_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                {"role": "user", "content": self._vehicle_line() + json.dumps(payload, ensure_ascii=False)},
             ],
         )
         return extract_json(resp.choices[0].message.content or "")
@@ -324,6 +335,8 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
                 ),
             }
         ]
+        if self._vehicle_line():
+            content.append({"type": "text", "text": self._vehicle_line()})
         if context:
             content.append({"type": "text", "text": context})
         hints = self._hints_for_range(windows, frames[0][0], frames[-1][0])
@@ -388,6 +401,7 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             "by meaning), merging a visual and a spoken observation of the same thing into one item "
             "with both evidence entries. Keep all evidence with its timestamps, source, quote and "
             "note. Return ONLY the merged JSON.",
+            "\n" + self._vehicle_line(),
             "\nPartials:\n" + json.dumps(partials, ensure_ascii=False),
         ]
         if transcript.strip():
@@ -525,5 +539,7 @@ class OpenAIFramesProvider(VideoAnalysisProvider):
             data = await asyncio.to_thread(self._consolidate, client, partials, transcript_obj.text)
 
         fs = FactSheet.model_validate(data)
+        if self.vehicle and not (fs.vehicle_model or "").strip():
+            fs.vehicle_model = self.vehicle
         fs.transcript = transcript_obj
         return fs

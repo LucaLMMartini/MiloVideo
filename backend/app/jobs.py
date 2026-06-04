@@ -27,6 +27,7 @@ async def run_job(job_id: str, video_path: Path) -> None:
         save_job(job)
 
     try:
+        vehicle = " ".join(p for p in (job.brand, job.model_name, job.trim) if p) or None
         provider = get_provider(
             job.provider,
             model=job.model,
@@ -34,6 +35,7 @@ async def run_job(job_id: str, video_path: Path) -> None:
             vision_detail=job.vision_detail,
             use_audio=job.use_audio,
             target_lang=job.target_lang,
+            vehicle=vehicle,
         )
         result = await provider.analyze(video_path, progress=report_progress)
 

@@ -55,17 +55,23 @@ def _items_from_sheet(sheet: FactSheet) -> list[dict]:
     return items
 
 
-def _outline(sheet: FactSheet, items: list[dict]) -> dict:
+def _vehicle_label(job: Job, sheet: FactSheet) -> str:
+    """Prefer the user-provided brand/model/trim, fall back to the detected model."""
+    user = " ".join(p for p in (job.brand, job.model_name, job.trim) if p).strip()
+    return user or (sheet.vehicle_model or "")
+
+
+def _outline(sheet: FactSheet, items: list[dict], vehicle: str) -> dict:
     """Group items into themed sections + pick representative timestamps (LLM, with fallback)."""
     if settings.openai_api_key:
         try:
-            return _outline_llm(items, sheet)
+            return _outline_llm(items, vehicle)
         except Exception as e:
             log.warning("report_pptx: LLM outline failed (%s) — using keyword fallback", e)
     return _outline_fallback(items)
 
 
-def _outline_llm(items: list[dict], sheet: FactSheet) -> dict:
+def _outline_llm(items: list[dict], vehicle: str) -> dict:
     from openai import OpenAI
 
     compact = [
@@ -86,7 +92,7 @@ def _outline_llm(items: list[dict], sheet: FactSheet) -> dict:
         "theme. Use the report language matching the facts.\n\n"
         "Return ONLY JSON: {\"title\": \"...\", \"sections\": [{\"title\": \"...\", "
         "\"summary\": \"...\", \"item_indices\": [int], \"key_timestamps\": [number]}]}\n\n"
-        f"Vehicle: {sheet.vehicle_model or 'unknown'}\nItems:\n"
+        f"Vehicle: {vehicle or 'unknown'}\nItems:\n"
         + json.dumps(compact, ensure_ascii=False)
     )
     client = OpenAI(api_key=settings.openai_api_key)
@@ -196,15 +202,15 @@ def _title_bar(slide, text: str):
     r.font.color.rgb = DARK
 
 
-def _add_title_slide(prs, title: str, sheet: FactSheet, job: Job):
+def _add_title_slide(prs, title: str, vehicle: str, job: Job):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     tf = _textbox(slide, Inches(0.8), Inches(2.4), Inches(11.7), Inches(2.0))
     p = tf.paragraphs[0]
     r = p.add_run(); r.text = title
     r.font.size = Pt(40); r.font.bold = True; r.font.color.rgb = DARK
-    if sheet.vehicle_model:
+    if vehicle:
         p2 = tf.add_paragraph()
-        r2 = p2.add_run(); r2.text = sheet.vehicle_model
+        r2 = p2.add_run(); r2.text = vehicle
         r2.font.size = Pt(24); r2.font.color.rgb = ACCENT
     sub = _textbox(slide, Inches(0.8), Inches(6.4), Inches(11.7), Inches(0.6))
     ps = sub.paragraphs[0]
@@ -317,7 +323,8 @@ def _add_sources_slide(prs, sheet: FactSheet, job: Job):
 def generate_pptx(job: Job, sheet: FactSheet, video_path: Path | None) -> bytes:
     """Build a management-ready PowerPoint deck from a fact-sheet."""
     items = _items_from_sheet(sheet)
-    outline = _outline(sheet, items)
+    vehicle = _vehicle_label(job, sheet)
+    outline = _outline(sheet, items, vehicle)
     sections = outline.get("sections", [])
     load_frame, release = _frame_loader(video_path)
     try:
@@ -326,7 +333,7 @@ def generate_pptx(job: Job, sheet: FactSheet, video_path: Path | None) -> bytes:
         prs.slide_height = SLIDE_H
 
         title = outline.get("title") or "Fahrzeug-Analyse"
-        _add_title_slide(prs, title, sheet, job)
+        _add_title_slide(prs, title, vehicle, job)
         if sheet.summary.strip():
             _add_text_slide(prs, "Zusammenfassung", sheet.summary.strip())
         if sections:
