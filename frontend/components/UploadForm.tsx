@@ -119,7 +119,7 @@ export function UploadForm() {
           }}
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
-          className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-6 text-center cursor-pointer transition-colors ${
+          className={`relative flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-6 text-center cursor-pointer transition-colors ${
             dragOver
               ? "border-neutral-900 dark:border-neutral-100 bg-neutral-100 dark:bg-neutral-800"
               : file
@@ -127,6 +127,22 @@ export function UploadForm() {
                 : "border-neutral-300 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-600"
           }`}
         >
+          {file && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setFile(null);
+                setError(null);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+              title="Video entfernen"
+              aria-label="Video entfernen"
+              className="absolute top-2 right-2 rounded-full border border-neutral-300 dark:border-neutral-700 bg-white/90 dark:bg-neutral-900/90 w-6 h-6 flex items-center justify-center text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            >
+              ✕
+            </button>
+          )}
           {file && fileUrl ? (
             <>
               <video

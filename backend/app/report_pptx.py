@@ -243,15 +243,21 @@ def _add_agenda_slide(prs, sections: list[dict]):
         p.space_after = Pt(6)
 
 
-def _evidence_caption(ev: list[dict]) -> str:
+def _evidence_sources(ev: list[dict]) -> str:
+    """Full source string for the Quellenverzeichnis (all evidence of one item)."""
     if not ev:
-        return ""
-    e = ev[0]
-    ts = _fmt_ts(float(e.get("t_start", 0)))
-    quote = (e.get("quote") or "").strip()
-    note = (e.get("note") or "").strip()
-    extra = quote and f"„{quote}“" or note
-    return f"{ts}" + (f" · {extra}" if extra else "")
+        return "(kein Beleg)"
+    parts = []
+    for e in ev:
+        ts = _fmt_ts(float(e.get("t_start", 0)))
+        end = e.get("t_end")
+        if end:
+            ts += f"–{_fmt_ts(float(end))}"
+        quote = (e.get("quote") or "").strip()
+        note = (e.get("note") or "").strip()
+        extra = f"„{quote}“" if quote else note
+        parts.append(ts + (f" · {extra}" if extra else ""))
+    return "; ".join(parts)
 
 
 def _add_section_slides(prs, section: dict, items: list[dict], load_frame):
@@ -284,15 +290,12 @@ def _add_section_slides(prs, section: dict, items: list[dict], load_frame):
         for j, i in enumerate(page):
             it = items[i]
             p = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-            r = p.add_run(); r.text = "• " + it["text"]
+            r = p.add_run(); r.text = "• " + it["text"] + " "
             r.font.size = Pt(15); r.font.color.rgb = DARK
-            p.space_after = Pt(2)
-            cap = _evidence_caption(it["evidence"])
-            if cap:
-                sub = tf.add_paragraph()
-                rs = sub.add_run(); rs.text = "   " + cap
-                rs.font.size = Pt(10); rs.font.color.rgb = GRAY
-                sub.space_after = Pt(8)
+            # Small superscript-style reference number into the Quellenverzeichnis.
+            ref = p.add_run(); ref.text = f"[{i + 1}]"
+            ref.font.size = Pt(11); ref.font.color.rgb = ACCENT
+            p.space_after = Pt(6)
 
         if has_img:
             top = Inches(1.8)
@@ -307,19 +310,77 @@ def _add_section_slides(prs, section: dict, items: list[dict], load_frame):
                 top = top + Inches(2.9)
 
 
-def _add_sources_slide(prs, sheet: FactSheet, job: Job):
+def _embed_movie(slide, video_path: Path, load_frame, left, top, width, height) -> bool:
+    """Embed the source video into a slide (with a poster frame). Best-effort."""
+    try:
+        poster = load_frame(1.0) or load_frame(0.0)
+        mime = "video/quicktime" if str(video_path).lower().endswith(".mov") else "video/mp4"
+        slide.shapes.add_movie(
+            str(video_path), left, top, width, height,
+            poster_frame_image=BytesIO(poster) if poster else None,
+            mime_type=mime,
+        )
+        return True
+    except Exception as e:
+        log.warning("report_pptx: could not embed video (%s)", e)
+        return False
+
+
+def _fill_entries(tf, chunk: list[str]):
+    for k, line in enumerate(chunk):
+        p = tf.paragraphs[0] if k == 0 else tf.add_paragraph()
+        r = p.add_run(); r.text = line
+        r.font.size = Pt(11); r.font.color.rgb = DARK
+        p.space_after = Pt(4)
+
+
+def _add_sources_slides(prs, items: list[dict], job: Job, video_path: Path | None, load_frame):
+    """Quellenverzeichnis: numbered sources, with the source video embedded under the heading."""
+    entries = [
+        f"[{i + 1}] {it['text'][:70]} — {_evidence_sources(it['evidence'])}"
+        for i, it in enumerate(items)
+    ]
+
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _title_bar(slide, "Quellen & Methodik")
-    tf = _textbox(slide, Inches(0.6), Inches(1.5), Inches(12.1), Inches(5.4))
+    _title_bar(slide, "Quellenverzeichnis")
+
+    has_video = False
+    if video_path:
+        has_video = _embed_movie(
+            slide, video_path, load_frame, Inches(0.6), Inches(1.4), Inches(6.4), Inches(3.6)
+        )
+        if has_video:
+            cap = _textbox(slide, Inches(0.6), Inches(5.05), Inches(6.4), Inches(0.4))
+            rc = cap.paragraphs[0].add_run()
+            rc.text = f"Video: {job.filename}"; rc.font.size = Pt(10); rc.font.color.rgb = GRAY
+
+    if has_video:
+        tf = _textbox(slide, Inches(7.2), Inches(1.4), Inches(5.5), Inches(5.6))
+        _fill_entries(tf, entries[:9])
+        rest = entries[9:]
+    else:
+        tf = _textbox(slide, Inches(0.6), Inches(1.5), Inches(12.1), Inches(5.4))
+        _fill_entries(tf, entries[:16])
+        rest = entries[16:]
+
+    for c in range(0, len(rest), 16):
+        s = prs.slides.add_slide(prs.slide_layouts[6])
+        _title_bar(s, "Quellenverzeichnis (Forts.)")
+        tf2 = _textbox(s, Inches(0.6), Inches(1.5), Inches(12.1), Inches(5.4))
+        _fill_entries(tf2, rest[c:c + 16])
+
+    # Short methodology footer slide.
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    _title_bar(s, "Methodik")
+    tf3 = _textbox(s, Inches(0.6), Inches(1.5), Inches(12.1), Inches(5.4))
     lines = [
-        f"Quelle: Video „{job.filename}“.",
-        f"{len(sheet.atomic_facts)} atomare Fakten und {len(sheet.features)} Features, "
-        "extrahiert per KI-Frame-Sampling und Voiceover-Transkript.",
+        f"Quelle: Video „{job.filename}“ — siehe eingebettetes Video im Quellenverzeichnis.",
         "Belege je Fakt als Zeitstempel (Sprungmarke ins Video) bzw. wörtliches Zitat.",
+        "Erstellt per KI-Frame-Sampling und Voiceover-Transkript.",
         "Hinweis: KI-generiert — vor Veröffentlichung stichprobenartig prüfen.",
     ]
     for i, ln in enumerate(lines):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p = tf3.paragraphs[0] if i == 0 else tf3.add_paragraph()
         r = p.add_run(); r.text = ln; r.font.size = Pt(12); r.font.color.rgb = GRAY
         p.space_after = Pt(8)
 
@@ -344,7 +405,7 @@ def generate_pptx(job: Job, sheet: FactSheet, video_path: Path | None) -> bytes:
             _add_agenda_slide(prs, sections)
         for s in sections:
             _add_section_slides(prs, s, items, load_frame)
-        _add_sources_slide(prs, sheet, job)
+        _add_sources_slides(prs, items, job, video_path, load_frame)
 
         out = BytesIO()
         prs.save(out)
